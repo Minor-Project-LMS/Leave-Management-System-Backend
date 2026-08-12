@@ -5,14 +5,11 @@ import com.lms.Leave_Management_System_Backend.model.User;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.PostConstruct;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
-import java.util.Base64;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 
 @Service
 public class AuthService {
@@ -32,6 +29,7 @@ public class AuthService {
 
     private final Map<String, OtpEntry> otpStore = new ConcurrentHashMap<>();
     private final Random random = new Random();
+    private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
     @PostConstruct
     private void initDemoUser() {
@@ -87,16 +85,11 @@ public class AuthService {
     }
 
     private String hashPassword(String plain) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] hashed = md.digest(plain.getBytes(StandardCharsets.UTF_8));
-            return Base64.getEncoder().encodeToString(hashed);
-        } catch (NoSuchAlgorithmException ex) {
-            throw new RuntimeException(ex);
-        }
+        return passwordEncoder.encode(plain);
     }
 
     private boolean verifyPassword(String plain, String hash) {
-        return hashPassword(plain).equals(hash);
+        if (hash == null) return false;
+        return passwordEncoder.matches(plain, hash);
     }
 }
