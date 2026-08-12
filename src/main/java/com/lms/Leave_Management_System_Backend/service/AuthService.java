@@ -4,7 +4,7 @@ import com.lms.Leave_Management_System_Backend.dto.UserDto;
 import com.lms.Leave_Management_System_Backend.model.User;
 import org.springframework.stereotype.Service;
 
-import javax.annotation.PostConstruct;
+import jakarta.annotation.PostConstruct;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Random;
@@ -14,7 +14,12 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 @Service
 public class AuthService {
 
+    private final EmailService emailService;
     private final Map<String, User> users = new ConcurrentHashMap<>();
+
+    public AuthService(EmailService emailService) {
+        this.emailService = emailService;
+    }
 
     // store OTPs with expiry
     private static class OtpEntry {
@@ -58,8 +63,11 @@ public class AuthService {
         Instant expiry = Instant.now().plusSeconds(5 * 60); // 5 minutes
         otpStore.put(email.toLowerCase(), new OtpEntry(otp, expiry));
 
-        // For now: log OTP to console. Replace with email sending later.
-        System.out.println("[AuthService] OTP for " + email + " = " + otp + " (valid 5 minutes)");
+        try {
+            emailService.sendOtpEmail(email, otp);
+        } catch (Exception ex) {
+            System.out.println("[AuthService] OTP for " + email + " = " + otp + " (valid 5 minutes)");
+        }
         return true;
     }
 
