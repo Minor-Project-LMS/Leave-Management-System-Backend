@@ -1,0 +1,22 @@
+name: PR Description Check
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+
+jobs:
+  check-pr-description:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check PR description
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.pull_request.body;
+
+            if (!body || body.trim().length === 0) {
+              core.setFailed("PR description is required. Please describe the changes made.");
+            } else {
+              console.log("PR description found.");
+            }
