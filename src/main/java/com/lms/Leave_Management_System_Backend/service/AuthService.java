@@ -38,11 +38,13 @@ public class AuthService {
 
     @PostConstruct
     private void initDemoUser() {
-        // Demo user: john.doe@company.com / Password@123
         String email = "john.doe@company.com";
         String hashed = hashPassword("Password@123");
-        User u = new User(1L, "John Doe", email, hashed);
-        users.put(email.toLowerCase(), u);
+        users.put(email.toLowerCase(), new User(1L, "John Doe", email, hashed, "EMPLOYEE"));
+
+        String adminEmail = "admin@company.com";
+        String adminHash = hashPassword("Admin@123");
+        users.put(adminEmail.toLowerCase(), new User(2L, "Admin User", adminEmail, adminHash, "HR_ADMIN"));
     }
 
     public UserDto authenticate(String email, String password) {
@@ -50,9 +52,16 @@ public class AuthService {
         User u = users.get(email.toLowerCase());
         if (u == null) return null;
         if (verifyPassword(password, u.getPasswordHash())) {
-            return new UserDto(u.getId(), u.getName(), u.getEmail());
+            return new UserDto(u.getId(), u.getName(), u.getEmail(), u.getRole());
         }
         return null;
+    }
+
+    public UserDto getUserByEmail(String email) {
+        if (email == null) return null;
+        User u = users.get(email.toLowerCase());
+        if (u == null) return null;
+        return new UserDto(u.getId(), u.getName(), u.getEmail(), u.getRole());
     }
 
     public boolean generateOtpForEmail(String email) {
