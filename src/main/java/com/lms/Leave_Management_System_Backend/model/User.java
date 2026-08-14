@@ -1,21 +1,33 @@
 package com.lms.Leave_Management_System_Backend.model;
 
+import jakarta.persistence.*;
+
+@Entity
+@Table(name = "app_users")
 public class User {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "user_id")
     private Long id;
+
+    @Column(name = "employee_code", nullable = false, unique = true)
+    private String employeeCode;
+
+    @Column(name = "full_name", nullable = false)
     private String name;
+
+    @Column(name = "email", nullable = false, unique = true)
     private String email;
+
+    @Column(name = "password_hash", nullable = false)
     private String passwordHash;
-    private String role;
+
+    @ManyToOne(fetch = FetchType.EAGER, optional = false)
+    @JoinColumn(name = "role_id", nullable = false)
+    private Role role;
 
     public User() {
-    }
-
-    public User(Long id, String name, String email, String passwordHash, String role) {
-        this.id = id;
-        this.name = name;
-        this.email = email;
-        this.passwordHash = passwordHash;
-        this.role = role;
     }
 
     public Long getId() {
@@ -24,6 +36,14 @@ public class User {
 
     public void setId(Long id) {
         this.id = id;
+    }
+
+    public String getEmployeeCode() {
+        return employeeCode;
+    }
+
+    public void setEmployeeCode(String employeeCode) {
+        this.employeeCode = employeeCode;
     }
 
     public String getName() {
@@ -50,11 +70,11 @@ public class User {
         this.passwordHash = passwordHash;
     }
 
-    public String getRole() {
+    public Role getRole() {
         return role;
     }
 
-    public void setRole(String role) {
+    public void setRole(Role role) {
         this.role = role;
     }
 }
