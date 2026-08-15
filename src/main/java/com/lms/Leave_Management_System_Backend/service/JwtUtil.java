@@ -90,4 +90,12 @@ public class JwtUtil {
     public String getEmailFromToken(String token) {
         return getClaims(token).getSubject();
     }
+
+    public String extractUserId(String token) {
+        try {
+            return getEmailFromToken(token);
+        } catch (Exception e) {
+            return null;
+        }
+    }
 }

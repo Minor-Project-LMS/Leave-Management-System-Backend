@@ -4,9 +4,15 @@ import com.lms.Leave_Management_System_Backend.dto.*;
 import com.lms.Leave_Management_System_Backend.service.AuthService;
 import com.lms.Leave_Management_System_Backend.service.JwtUtil;
 import com.lms.Leave_Management_System_Backend.service.RefreshTokenService;
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -15,6 +21,9 @@ public class AuthController {
     private final AuthService authService;
     private final JwtUtil jwtUtil;
     private final RefreshTokenService refreshTokenService;
+
+    @Value("${cookie.same-site:Lax}")
+    private String cookieSameSite;
 
     public AuthController(
             AuthService authService,
@@ -27,7 +36,10 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody LoginRequest req) {
+    public ResponseEntity<?> login(
+            @RequestBody LoginRequest req,
+            HttpServletRequest request,
+            HttpServletResponse response) {
 
         if (req == null ||
                 req.getEmail() == null ||
@@ -57,24 +69,28 @@ public class AuthController {
                     ));
         }
 
-        String accessToken =
-                jwtUtil.generateAccessToken(user);
+        String accessToken = jwtUtil.generateAccessToken(user);
 
-        String refreshToken =
-                jwtUtil.generateRefreshToken(user.getEmail());
+        // Generate random UUID as refresh token, store with session fingerprinting
+        String refreshToken = UUID.randomUUID().toString();
+        refreshTokenService.store(refreshToken, user.getEmail(), request);
 
-        refreshTokenService.store(
-                refreshToken,
-                user.getEmail()
-        );
+        // Set HttpOnly, Secure, SameSite cookie scoped to root path
+        Cookie cookie = new Cookie("refreshToken", refreshToken);
+        cookie.setHttpOnly(true);
+        cookie.setSecure(false); // Set to true in production with HTTPS
+        cookie.setPath("/"); // Root path - available across entire application
+        cookie.setMaxAge((int) (7 * 24 * 60 * 60));
+        cookie.setAttribute("SameSite", cookieSameSite);
+        response.addCookie(cookie);
 
+        // Return only access token in response body (refresh token is in cookie)
         return ResponseEntity.ok(
                 new LoginResponse(
                         true,
                         "Login successful",
                         user,
-                        accessToken,
-                        refreshToken
+                        accessToken
                 )
         );
     }
@@ -137,46 +153,59 @@ public class AuthController {
 
     @PostMapping("/refresh")
     public ResponseEntity<?> refresh(
-            @RequestBody RefreshRequest req) {
+            HttpServletRequest request,
+            HttpServletResponse response) {
 
-        String refreshToken = req.getRefreshToken();
-
+        // Extract refresh token from HttpOnly cookie
+        String refreshToken = extractRefreshTokenFromCookie(request);
+        
         if (refreshToken == null || refreshToken.isBlank()) {
             return ResponseEntity
-                    .badRequest()
+                    .status(HttpStatus.UNAUTHORIZED)
                     .body(new ApiResponse(
                             false,
-                            "Missing refresh token"
+                            "Missing refresh token cookie"
                     ));
         }
 
-        if (!jwtUtil.validateToken(refreshToken)) {
+        // Look up token in Redis with session validation
+        String userId = refreshTokenService.getUserIdByToken(refreshToken);
+        if (userId == null) {
             return ResponseEntity
                     .status(HttpStatus.UNAUTHORIZED)
                     .body(new ApiResponse(
                             false,
-                            "Invalid refresh token"
+                            "Invalid or expired refresh token"
                     ));
         }
 
-        String email =
-                jwtUtil.getEmailFromToken(refreshToken);
-
-        if (!refreshTokenService.validate(
-                refreshToken,
-                email)) {
-
+        // CRITICAL SECURITY FIX: Validate session fingerprint before proceeding
+        if (!refreshTokenService.validateTokenWithSession(refreshToken, userId, request)) {
+            // Session fingerprint mismatch - potential cookie theft
+            // Revoke all tokens in this session family
+            String sessionId = refreshTokenService.getSessionIdByToken(refreshToken);
+            if (sessionId != null) {
+                refreshTokenService.revokeAllTokensInSession(sessionId);
+            }
+            
+            // Clear the cookie
+            Cookie clearCookie = new Cookie("refreshToken", "");
+            clearCookie.setHttpOnly(true);
+            clearCookie.setSecure(false);
+            clearCookie.setPath("/");
+            clearCookie.setMaxAge(0);
+            clearCookie.setAttribute("SameSite", cookieSameSite);
+            response.addCookie(clearCookie);
+            
             return ResponseEntity
                     .status(HttpStatus.UNAUTHORIZED)
                     .body(new ApiResponse(
                             false,
-                            "Refresh token expired or revoked"
+                            "Session validation failed - possible security violation"
                     ));
         }
 
-        UserDto user =
-                authService.getUserByEmail(email);
-
+        UserDto user = authService.getUserByEmail(userId);
         if (user == null) {
             return ResponseEntity
                     .status(HttpStatus.UNAUTHORIZED)
@@ -186,41 +215,111 @@ public class AuthController {
                     ));
         }
 
-        String newAccessToken =
-                jwtUtil.generateAccessToken(user);
+        // Perform atomic Refresh Token Rotation (RTR) with breach detection
+        String newRefreshToken = refreshTokenService.rotateToken(refreshToken, userId, request);
+        
+        if (newRefreshToken == null) {
+            // Rotation failed - either replay attack detected or token expired
+            // Clear the cookie to force re-authentication
+            Cookie clearCookie = new Cookie("refreshToken", "");
+            clearCookie.setHttpOnly(true);
+            clearCookie.setSecure(false);
+            clearCookie.setPath("/"); // Root path - clear from entire application
+            clearCookie.setMaxAge(0);
+            clearCookie.setAttribute("SameSite", cookieSameSite);
+            response.addCookie(clearCookie);
+            
+            return ResponseEntity
+                    .status(HttpStatus.UNAUTHORIZED)
+                    .body(new ApiResponse(
+                            false,
+                            "Session expired or security violation detected - please login again"
+                    ));
+        }
 
-        String newRefreshToken =
-                jwtUtil.generateRefreshToken(email);
+        // Set new refresh token cookie with updated security flags
+        Cookie newCookie = new Cookie("refreshToken", newRefreshToken);
+        newCookie.setHttpOnly(true);
+        newCookie.setSecure(false); // Set to true in production with HTTPS
+        newCookie.setPath("/"); // Root path - available across entire application
+        newCookie.setMaxAge((int) (7 * 24 * 60 * 60));
+        newCookie.setAttribute("SameSite", cookieSameSite);
+        response.addCookie(newCookie);
 
-        refreshTokenService.revoke(refreshToken);
+        String newAccessToken = jwtUtil.generateAccessToken(user);
 
-        refreshTokenService.store(
-                newRefreshToken,
-                email
-        );
-
+        // Return only the new access token in response body
         return ResponseEntity.ok(
                 new LoginResponse(
                         true,
                         "Token refreshed",
                         user,
-                        newAccessToken,
-                        newRefreshToken
+                        newAccessToken
                 )
         );
     }
 
+    private String extractRefreshTokenFromCookie(HttpServletRequest request) {
+        Cookie[] cookies = request.getCookies();
+        if (cookies != null) {
+            for (Cookie cookie : cookies) {
+                if ("refreshToken".equals(cookie.getName())) {
+                    return cookie.getValue();
+                }
+            }
+        }
+        return null;
+    }
+
     @PostMapping("/logout")
     public ResponseEntity<?> logout(
-            @RequestBody RefreshRequest req) {
+            HttpServletRequest request,
+            HttpServletResponse response) {
 
-        String refreshToken = req.getRefreshToken();
-
-        if (refreshToken != null &&
-                !refreshToken.isBlank()) {
-
-            refreshTokenService.revoke(refreshToken);
+        String refreshToken = extractRefreshTokenFromCookie(request);
+        if (refreshToken != null && !refreshToken.isBlank()) {
+            // CRITICAL: Validate session before logout to prevent cookie theft attacks
+            String userId = refreshTokenService.getUserIdByToken(refreshToken);
+            if (userId != null) {
+                if (!refreshTokenService.validateTokenWithSession(refreshToken, userId, request)) {
+                    // Session validation failed - cookie theft suspected
+                    // Still clear the cookie but don't reveal specific error
+                    Cookie cookie = new Cookie("refreshToken", "");
+                    cookie.setHttpOnly(true);
+                    cookie.setSecure(false);
+                    cookie.setPath("/");
+                    cookie.setMaxAge(0);
+                    cookie.setAttribute("SameSite", cookieSameSite);
+                    response.addCookie(cookie);
+                    
+                    return ResponseEntity.ok(
+                            new ApiResponse(
+                                    true,
+                                    "Logged out successfully"
+                            )
+                    );
+                }
+                
+                // Revoke all tokens in the session family for security
+                String sessionId = refreshTokenService.getSessionIdByToken(refreshToken);
+                if (sessionId != null) {
+                    refreshTokenService.revokeAllTokensInSession(sessionId);
+                } else {
+                    refreshTokenService.revoke(refreshToken);
+                }
+            } else {
+                refreshTokenService.revoke(refreshToken);
+            }
         }
+
+        // Clear the refresh token cookie scoped to root path
+        Cookie cookie = new Cookie("refreshToken", "");
+        cookie.setHttpOnly(true);
+        cookie.setSecure(false);
+        cookie.setPath("/"); // Root path - clear from entire application
+        cookie.setMaxAge(0);
+        cookie.setAttribute("SameSite", cookieSameSite);
+        response.addCookie(cookie);
 
         return ResponseEntity.ok(
                 new ApiResponse(
