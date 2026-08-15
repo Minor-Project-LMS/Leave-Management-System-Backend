@@ -4,7 +4,6 @@ import com.lms.Leave_Management_System_Backend.model.RefreshToken;
 import com.lms.Leave_Management_System_Backend.repository.RefreshTokenRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,17 +23,14 @@ import java.util.UUID;
 public class RefreshTokenService {
 
     private final RefreshTokenRepository refreshTokenRepository;
-    private final RedisTemplate<String, String> redisTemplate;
     private final SecureRandom secureRandom;
 
     @Value("${jwt.refresh_expiration_seconds:18000}")
     private long refreshExpirySeconds;
 
     @Autowired
-    public RefreshTokenService(RefreshTokenRepository refreshTokenRepository, 
-                           RedisTemplate<String, String> redisTemplate) {
+    public RefreshTokenService(RefreshTokenRepository refreshTokenRepository) {
         this.refreshTokenRepository = refreshTokenRepository;
-        this.redisTemplate = redisTemplate;
         this.secureRandom = new SecureRandom();
     }
 
@@ -153,7 +149,7 @@ public class RefreshTokenService {
         }
         String normalizedUserId = userId.toLowerCase();
         refreshTokenRepository.findAll().forEach(refreshToken -> {
-            if (refreshToken.getUserId().equalsIgnoreCase(normalizedUserId)) {
+            if (refreshToken != null && refreshToken.getUserId().equalsIgnoreCase(normalizedUserId)) {
                 refreshTokenRepository.delete(refreshToken);
             }
         });
@@ -169,13 +165,9 @@ public class RefreshTokenService {
             return;
         }
         
-        // Use RedisTemplate for atomic session-wide deletion
-        String sessionKey = "session:" + sessionId;
-        redisTemplate.delete(sessionKey);
-        
-        // Also mark all tokens in this session as revoked
+        // Mark all tokens in this session as revoked
         refreshTokenRepository.findAll().forEach(refreshToken -> {
-            if (sessionId.equals(refreshToken.getSessionId())) {
+            if (refreshToken != null && sessionId.equals(refreshToken.getSessionId())) {
                 refreshToken.setRevoked(true);
                 refreshTokenRepository.save(refreshToken);
             }
@@ -210,7 +202,10 @@ public class RefreshTokenService {
                         if (!currentFingerprint.equals(refreshToken.getSessionFingerprint())) {
                             // Fingerprint mismatch - cookie theft detected
                             // Revoke entire session family
-                            revokeAllTokensInSession(refreshToken.getSessionId());
+                            String sessionId = refreshToken.getSessionId();
+                            if (sessionId != null) {
+                                revokeAllTokensInSession(sessionId);
+                            }
                             return false;
                         }
                     }
@@ -277,7 +272,10 @@ public class RefreshTokenService {
         
         if (existingToken.isRevoked()) {
             // Token was already revoked - replay attack detected
-            revokeAllTokensInSession(existingToken.getSessionId());
+            String sessionId = existingToken.getSessionId();
+            if (sessionId != null) {
+                revokeAllTokensInSession(sessionId);
+            }
             return null;
         }
         
@@ -291,7 +289,10 @@ public class RefreshTokenService {
             String currentFingerprint = generateSessionFingerprint(request);
             if (!currentFingerprint.equals(existingToken.getSessionFingerprint())) {
                 // Fingerprint mismatch - potential session hijacking
-                revokeAllTokensInSession(existingToken.getSessionId());
+                String sessionId = existingToken.getSessionId();
+                if (sessionId != null) {
+                    revokeAllTokensInSession(sessionId);
+                }
                 return null;
             }
         }
@@ -319,7 +320,7 @@ public class RefreshTokenService {
             newExpirationTime,
             refreshExpirySeconds,
             sessionFingerprint,
-            existingToken.getSessionId() // Keep same session family
+            existingToken.getSessionId() != null ? existingToken.getSessionId() : generateSessionId() // Keep same session family
         );
         newRefreshToken.setRotationCount(existingToken.getRotationCount() + 1);
         
