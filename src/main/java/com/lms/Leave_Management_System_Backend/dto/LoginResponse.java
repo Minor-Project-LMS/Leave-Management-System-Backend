@@ -1,19 +1,13 @@
 package com.lms.Leave_Management_System_Backend.dto;
 
-public class LoginResponse extends ApiResponse {
+public class LoginResponse {
     private UserDto user;
     private String accessToken;
 
     public LoginResponse() {
     }
 
-    public LoginResponse(boolean success, String message, UserDto user) {
-        super(success, message);
-        this.user = user;
-    }
-
-    public LoginResponse(boolean success, String message, UserDto user, String accessToken) {
-        super(success, message);
+    public LoginResponse(UserDto user, String accessToken) {
         this.user = user;
         this.accessToken = accessToken;
     }

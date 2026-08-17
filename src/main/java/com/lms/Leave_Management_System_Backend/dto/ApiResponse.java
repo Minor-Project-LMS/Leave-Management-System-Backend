@@ -1,15 +1,15 @@
 package com.lms.Leave_Management_System_Backend.dto;
 
-public class ApiResponse {
+public class ApiResponse<T> {
     private boolean success;
-    private String message;
+    private T data;
 
     public ApiResponse() {
     }
 
-    public ApiResponse(boolean success, String message) {
+    public ApiResponse(boolean success, T data) {
         this.success = success;
-        this.message = message;
+        this.data = data;
     }
 
     public boolean isSuccess() {
@@ -20,11 +20,11 @@ public class ApiResponse {
         this.success = success;
     }
 
-    public String getMessage() {
-        return message;
+    public T getData() {
+        return data;
     }
 
-    public void setMessage(String message) {
-        this.message = message;
+    public void setData(T data) {
+        this.data = data;
     }
 }

@@ -310,11 +310,26 @@ public class AuthService {
                     user.getRole().getRoleCode();
         }
 
-        return new UserDto(
+        UserDto userDto = new UserDto(
                 user.getId(),
                 user.getName(),
                 user.getEmail(),
                 roleCode
         );
+
+        // Add additional fields if needed for profile
+        userDto.setEmployeeCode(user.getEmployeeCode());
+        if (user.getDepartment() != null) {
+            userDto.setDepartmentId(user.getDepartment().getId());
+            userDto.setDepartmentName(user.getDepartment().getName());
+        }
+        if (user.getReportsTo() != null) {
+            userDto.setManagerId(user.getReportsTo().getId());
+            userDto.setManagerName(user.getReportsTo().getName());
+        }
+        userDto.setDateOfJoining(user.getDateOfJoining());
+        userDto.setEmploymentStatus(user.getEmploymentStatus().name());
+
+        return userDto;
     }
 }

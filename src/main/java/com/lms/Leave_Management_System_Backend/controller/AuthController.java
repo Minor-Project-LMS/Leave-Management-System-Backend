@@ -1,6 +1,7 @@
 package com.lms.Leave_Management_System_Backend.controller;
 
 import com.lms.Leave_Management_System_Backend.dto.*;
+import com.lms.Leave_Management_System_Backend.security.RequireRole;
 import com.lms.Leave_Management_System_Backend.service.AuthService;
 import com.lms.Leave_Management_System_Backend.service.JwtUtil;
 import com.lms.Leave_Management_System_Backend.service.RefreshTokenService;
@@ -15,7 +16,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/auth")
+@RequestMapping("/api/v1/auth")
 public class AuthController {
 
     private final AuthService authService;
@@ -63,7 +64,7 @@ public class AuthController {
         if (user == null) {
             return ResponseEntity
                     .status(HttpStatus.UNAUTHORIZED)
-                    .body(new ApiResponse(
+                    .body(new ApiResponse<String>(
                             false,
                             "Invalid email or password"
                     ));
@@ -75,22 +76,20 @@ public class AuthController {
         String refreshToken = UUID.randomUUID().toString();
         refreshTokenService.store(refreshToken, user.getEmail(), request);
 
-        // Set HttpOnly, Secure, SameSite cookie scoped to root path
+        // Set HttpOnly, Secure, SameSite cookie scoped to /api/v1/auth
         Cookie cookie = new Cookie("refreshToken", refreshToken);
         cookie.setHttpOnly(true);
         cookie.setSecure(false); // Set to true in production with HTTPS
-        cookie.setPath("/"); // Root path - available across entire application
+        cookie.setPath("/api/v1/auth"); // Scoped to auth endpoints per OpenAPI spec
         cookie.setMaxAge((int) (7 * 24 * 60 * 60));
         cookie.setAttribute("SameSite", cookieSameSite);
         response.addCookie(cookie);
 
         // Return only access token in response body (refresh token is in cookie)
         return ResponseEntity.ok(
-                new LoginResponse(
+                new ApiResponse<LoginResponse>(
                         true,
-                        "Login successful",
-                        user,
-                        accessToken
+                        new LoginResponse(user, accessToken)
                 )
         );
     }
@@ -102,21 +101,8 @@ public class AuthController {
         boolean ok =
                 authService.generateOtpForEmail(req.getEmail());
 
-        if (!ok) {
-            return ResponseEntity
-                    .status(HttpStatus.NOT_FOUND)
-                    .body(new ApiResponse(
-                            false,
-                            "User not found"
-                    ));
-        }
-
-        return ResponseEntity.ok(
-                new ApiResponse(
-                        true,
-                        "If the email is registered, a reset code has been sent."
-                )
-        );
+        // Always return 202 regardless of whether email exists (account enumeration prevention)
+        return ResponseEntity.status(HttpStatus.ACCEPTED).build();
     }
 
     @PostMapping("/reset-password")
@@ -132,7 +118,7 @@ public class AuthController {
         if (!valid) {
             return ResponseEntity
                     .badRequest()
-                    .body(new ApiResponse(
+                    .body(new ApiResponse<String>(
                             false,
                             "Invalid or expired OTP"
                     ));
@@ -143,12 +129,7 @@ public class AuthController {
                 req.getNewPassword()
         );
 
-        return ResponseEntity.ok(
-                new ApiResponse(
-                        true,
-                        "Password has been reset successfully"
-                )
-        );
+        return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/refresh")
@@ -158,11 +139,11 @@ public class AuthController {
 
         // Extract refresh token from HttpOnly cookie
         String refreshToken = extractRefreshTokenFromCookie(request);
-        
+
         if (refreshToken == null || refreshToken.isBlank()) {
             return ResponseEntity
                     .status(HttpStatus.UNAUTHORIZED)
-                    .body(new ApiResponse(
+                    .body(new ApiResponse<String>(
                             false,
                             "Missing refresh token cookie"
                     ));
@@ -173,7 +154,7 @@ public class AuthController {
         if (userId == null) {
             return ResponseEntity
                     .status(HttpStatus.UNAUTHORIZED)
-                    .body(new ApiResponse(
+                    .body(new ApiResponse<String>(
                             false,
                             "Invalid or expired refresh token"
                     ));
@@ -187,19 +168,19 @@ public class AuthController {
             if (sessionId != null) {
                 refreshTokenService.revokeAllTokensInSession(sessionId);
             }
-            
+
             // Clear the cookie
             Cookie clearCookie = new Cookie("refreshToken", "");
             clearCookie.setHttpOnly(true);
             clearCookie.setSecure(false);
-            clearCookie.setPath("/");
+            clearCookie.setPath("/api/v1/auth");
             clearCookie.setMaxAge(0);
             clearCookie.setAttribute("SameSite", cookieSameSite);
             response.addCookie(clearCookie);
-            
+
             return ResponseEntity
                     .status(HttpStatus.UNAUTHORIZED)
-                    .body(new ApiResponse(
+                    .body(new ApiResponse<String>(
                             false,
                             "Session validation failed - possible security violation"
                     ));
@@ -209,7 +190,7 @@ public class AuthController {
         if (user == null) {
             return ResponseEntity
                     .status(HttpStatus.UNAUTHORIZED)
-                    .body(new ApiResponse(
+                    .body(new ApiResponse<String>(
                             false,
                             "User not found"
                     ));
@@ -217,21 +198,21 @@ public class AuthController {
 
         // Perform atomic Refresh Token Rotation (RTR) with breach detection
         String newRefreshToken = refreshTokenService.rotateToken(refreshToken, userId, request);
-        
+
         if (newRefreshToken == null) {
             // Rotation failed - either replay attack detected or token expired
             // Clear the cookie to force re-authentication
             Cookie clearCookie = new Cookie("refreshToken", "");
             clearCookie.setHttpOnly(true);
             clearCookie.setSecure(false);
-            clearCookie.setPath("/"); // Root path - clear from entire application
+            clearCookie.setPath("/api/v1/auth");
             clearCookie.setMaxAge(0);
             clearCookie.setAttribute("SameSite", cookieSameSite);
             response.addCookie(clearCookie);
-            
+
             return ResponseEntity
                     .status(HttpStatus.UNAUTHORIZED)
-                    .body(new ApiResponse(
+                    .body(new ApiResponse<String>(
                             false,
                             "Session expired or security violation detected - please login again"
                     ));
@@ -241,7 +222,7 @@ public class AuthController {
         Cookie newCookie = new Cookie("refreshToken", newRefreshToken);
         newCookie.setHttpOnly(true);
         newCookie.setSecure(false); // Set to true in production with HTTPS
-        newCookie.setPath("/"); // Root path - available across entire application
+        newCookie.setPath("/api/v1/auth");
         newCookie.setMaxAge((int) (7 * 24 * 60 * 60));
         newCookie.setAttribute("SameSite", cookieSameSite);
         response.addCookie(newCookie);
@@ -250,11 +231,9 @@ public class AuthController {
 
         // Return only the new access token in response body
         return ResponseEntity.ok(
-                new LoginResponse(
+                new ApiResponse<LoginResponse>(
                         true,
-                        "Token refreshed",
-                        user,
-                        newAccessToken
+                        new LoginResponse(user, newAccessToken)
                 )
         );
     }
@@ -272,6 +251,7 @@ public class AuthController {
     }
 
     @PostMapping("/logout")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
     public ResponseEntity<?> logout(
             HttpServletRequest request,
             HttpServletResponse response) {
@@ -287,17 +267,12 @@ public class AuthController {
                     Cookie cookie = new Cookie("refreshToken", "");
                     cookie.setHttpOnly(true);
                     cookie.setSecure(false);
-                    cookie.setPath("/");
+                    cookie.setPath("/api/v1/auth");
                     cookie.setMaxAge(0);
                     cookie.setAttribute("SameSite", cookieSameSite);
                     response.addCookie(cookie);
-                    
-                    return ResponseEntity.ok(
-                            new ApiResponse(
-                                    true,
-                                    "Logged out successfully"
-                            )
-                    );
+
+                    return ResponseEntity.noContent().build();
                 }
                 
                 // Revoke all tokens in the session family for security
@@ -312,20 +287,15 @@ public class AuthController {
             }
         }
 
-        // Clear the refresh token cookie scoped to root path
+        // Clear the refresh token cookie scoped to /api/v1/auth
         Cookie cookie = new Cookie("refreshToken", "");
         cookie.setHttpOnly(true);
         cookie.setSecure(false);
-        cookie.setPath("/"); // Root path - clear from entire application
+        cookie.setPath("/api/v1/auth");
         cookie.setMaxAge(0);
         cookie.setAttribute("SameSite", cookieSameSite);
         response.addCookie(cookie);
 
-        return ResponseEntity.ok(
-                new ApiResponse(
-                        true,
-                        "Logged out successfully"
-                )
-        );
+        return ResponseEntity.noContent().build();
     }
 }
