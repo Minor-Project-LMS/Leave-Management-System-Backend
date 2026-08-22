@@ -11,7 +11,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
-import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
@@ -31,89 +30,89 @@ public class DashboardController {
 
     @GetMapping("/summary")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
-    public ResponseEntity<ApiResponse<DashboardSummary>> getDashboardSummary(Authentication authentication) {
+    public ResponseEntity<DashboardSummary> getDashboardSummary(Authentication authentication) {
         String email = authentication.getName();
         User user = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
 
         DashboardSummary summary = new DashboardSummary();
-        summary.setUserName(user.getName());
-        summary.setRole(user.getRole().getRoleCode());
-        if (user.getDepartment() != null) {
-            summary.setDepartmentName(user.getDepartment().getName());
-        }
+        summary.setAvailableLeave(18.5);
+        summary.setUsedLeave(7.5);
+        summary.setPendingRequests(leaveRequestRepository.findByUserIdAndStatus(user.getId(), LeaveRequest.RequestStatus.PENDING_L1).size() + 
+                                       leaveRequestRepository.findByUserIdAndStatus(user.getId(), LeaveRequest.RequestStatus.PENDING_L2).size());
+        summary.setCompOffBalance(1.0);
 
-        // Leave balances (simplified - in real implementation, would query leave_ledger)
-        Map<String, BigDecimal> balances = new HashMap<>();
-        balances.put("ANNUAL", new BigDecimal("12.0"));
-        balances.put("SICK", new BigDecimal("6.0"));
-        balances.put("CASUAL", new BigDecimal("3.0"));
-        summary.setLeaveBalances(balances);
-
-        // Pending approvals (for managers)
-        if ("MANAGER".equals(user.getRole().getRoleCode()) || "HR_ADMIN".equals(user.getRole().getRoleCode())) {
-            List<LeaveRequest> pendingL1 = leaveRequestRepository.findByCurrentApproverIdAndStatus(
-                    user.getId(), LeaveRequest.RequestStatus.PENDING_L1);
-            List<LeaveRequest> pendingL2 = leaveRequestRepository.findByCurrentApproverIdAndStatus(
-                    user.getId(), LeaveRequest.RequestStatus.PENDING_L2);
-            summary.setPendingApprovalsCount(pendingL1.size() + pendingL2.size());
-        } else {
-            summary.setPendingApprovalsCount(0);
-        }
-
-        // Upcoming leaves (approved leaves starting in next 30 days)
-        LocalDate today = LocalDate.now();
-        LocalDate thirtyDaysLater = today.plusDays(30);
-        List<LeaveRequest> upcomingLeaves = leaveRequestRepository.findByUserIdAndStatusAndStartDateBetween(
-                user.getId(), LeaveRequest.RequestStatus.APPROVED, today, thirtyDaysLater);
-        summary.setUpcomingLeavesCount(upcomingLeaves.size());
-
-        // Team on leave today (for managers)
-        if ("MANAGER".equals(user.getRole().getRoleCode()) || "HR_ADMIN".equals(user.getRole().getRoleCode())) {
-            List<User> teamMembers = userRepository.findByReportsToId(user.getId());
-            int teamOnLeave = 0;
-            for (User teamMember : teamMembers) {
-                List<LeaveRequest> todayLeaves = leaveRequestRepository.findByUserIdAndStatusAndStartDateBetween(
-                        teamMember.getId(), LeaveRequest.RequestStatus.APPROVED, today, today);
-                if (!todayLeaves.isEmpty()) {
-                    teamOnLeave++;
-                }
-            }
-            summary.setTeamOnLeaveToday(teamOnLeave);
-        } else {
-            summary.setTeamOnLeaveToday(0);
-        }
-
-        return ResponseEntity.ok(new ApiResponse<>(true, summary));
+        return ResponseEntity.ok(summary);
     }
 
-    @GetMapping("/my-leave-balance")
+    @GetMapping("/leave-trend")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
-    public ResponseEntity<ApiResponse<Map<String, BigDecimal>>> getMyLeaveBalance(Authentication authentication) {
+    public ResponseEntity<List<LeaveTrendPoint>> getLeaveTrend(
+            @RequestParam(required = false) Integer year,
+            Authentication authentication) {
+        
         String email = authentication.getName();
         User user = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
 
-        // Simplified implementation - in real system, would query leave_ledger table
-        Map<String, BigDecimal> balances = new HashMap<>();
-        balances.put("ANNUAL", new BigDecimal("12.0"));
-        balances.put("SICK", new BigDecimal("6.0"));
-        balances.put("CASUAL", new BigDecimal("3.0"));
-        balances.put("COMP_OFF", new BigDecimal("0.0"));
-
-        return ResponseEntity.ok(new ApiResponse<>(true, balances));
-    }
-
-    @GetMapping("/upcoming-holidays")
-    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
-    public ResponseEntity<ApiResponse<List<Map<String, String>>>> getUpcomingHolidays() {
-        // Simplified implementation - in real system, would query holidays table
-        List<Map<String, String>> holidays = List.of(
-                Map.of("date", "2024-12-25", "name", "Christmas Day"),
-                Map.of("date", "2025-01-01", "name", "New Year's Day"),
-                Map.of("date", "2025-01-26", "name", "Republic Day")
+        // Simplified implementation - would query actual leave data
+        List<LeaveTrendPoint> trendPoints = List.of(
+                new LeaveTrendPoint("Jan", 2.0),
+                new LeaveTrendPoint("Feb", 1.5),
+                new LeaveTrendPoint("Mar", 3.0),
+                new LeaveTrendPoint("Apr", 0.5),
+                new LeaveTrendPoint("May", 2.0),
+                new LeaveTrendPoint("Jun", 1.0),
+                new LeaveTrendPoint("Jul", 0.0),
+                new LeaveTrendPoint("Aug", 0.0),
+                new LeaveTrendPoint("Sep", 0.0),
+                new LeaveTrendPoint("Oct", 0.0),
+                new LeaveTrendPoint("Nov", 0.0),
+                new LeaveTrendPoint("Dec", 0.0)
         );
 
-        return ResponseEntity.ok(new ApiResponse<>(true, holidays));
+        return ResponseEntity.ok(trendPoints);
+    }
+
+    @GetMapping("/leave-distribution")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    public ResponseEntity<List<LeaveDistributionSlice>> getLeaveDistribution(
+            @RequestParam(required = false) Integer year,
+            Authentication authentication) {
+        
+        String email = authentication.getName();
+        User user = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        // Simplified implementation - would query actual leave data
+        List<LeaveDistributionSlice> distribution = List.of(
+                new LeaveDistributionSlice("Casual Leave", 6.0, "#2563eb"),
+                new LeaveDistributionSlice("Sick Leave", 3.0, "#16a34a"),
+                new LeaveDistributionSlice("Annual Leave", 8.5, "#dc2626"),
+                new LeaveDistributionSlice("Comp-Off", 1.0, "#9333ea")
+        );
+
+        return ResponseEntity.ok(distribution);
+    }
+
+    @GetMapping("/hr-summary")
+    @RequireRole({"HR_ADMIN"})
+    public ResponseEntity<Map<String, Object>> getHrSummary(Authentication authentication) {
+        Map<String, Object> summary = new HashMap<>();
+        List<User> allUsers = userRepository.findAll();
+        summary.put("totalEmployees", allUsers.size());
+        summary.put("activeEmployees", userRepository.findByEmploymentStatus(User.EmploymentStatus.ACTIVE).size());
+        
+        LocalDate today = LocalDate.now();
+        List<LeaveRequest> allLeaveRequests = leaveRequestRepository.findAll();
+        List<LeaveRequest> onLeaveToday = allLeaveRequests.stream()
+                .filter(lr -> lr.getStatus() == LeaveRequest.RequestStatus.APPROVED && 
+                             !lr.getStartDate().isAfter(today) && !lr.getEndDate().isBefore(today))
+                .collect(java.util.stream.Collectors.toList());
+        summary.put("onLeaveToday", onLeaveToday.size());
+        
+        summary.put("inactiveEmployees", userRepository.findByEmploymentStatus(User.EmploymentStatus.SEPARATED).size());
+
+        return ResponseEntity.ok(summary);
     }
 }

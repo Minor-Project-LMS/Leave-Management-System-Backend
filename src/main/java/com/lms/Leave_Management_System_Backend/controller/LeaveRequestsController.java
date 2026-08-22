@@ -225,11 +225,11 @@ public class LeaveRequestsController {
         return ResponseEntity.ok(new ApiResponse<>(true, dto));
     }
 
-    @PatchMapping("/{requestId}/withdraw")
+    @PostMapping("/{requestId}/withdraw")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
     public ResponseEntity<ApiResponse<LeaveRequestDto>> withdrawLeaveRequest(
             @PathVariable Long requestId,
-            @RequestBody(required = false) WithdrawRequest withdrawRequest,
+            @RequestBody(required = false) com.lms.Leave_Management_System_Backend.dto.WithdrawRequest withdrawRequest,
             Authentication authentication) {
         
         LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
@@ -261,6 +261,195 @@ public class LeaveRequestsController {
         return ResponseEntity.ok(new ApiResponse<>(true, dto));
     }
 
+    @GetMapping("/{requestId}/approvals")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    public ResponseEntity<List<CommentDto>> getApprovals(
+            @PathVariable Long requestId,
+            Authentication authentication) {
+        
+        LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
+                .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
+
+        // Check access permissions
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") && 
+            !leaveRequest.getUser().getId().equals(currentUser.getId())) {
+            throw new SecurityException("You can only view your own leave request approvals");
+        }
+
+        // Simplified implementation - would query actual approval history
+        List<CommentDto> approvals = List.of(
+                new CommentDto(1L, requestId, leaveRequest.getCurrentApprover() != null ? leaveRequest.getCurrentApprover().getId() : 0L, 
+                              leaveRequest.getCurrentApprover() != null ? leaveRequest.getCurrentApprover().getName() : "Pending", 
+                              "Pending approval", LocalDateTime.now())
+        );
+
+        return ResponseEntity.ok(approvals);
+    }
+
+    @GetMapping("/{requestId}/comments")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    public ResponseEntity<List<CommentDto>> getComments(
+            @PathVariable Long requestId,
+            Authentication authentication) {
+        
+        LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
+                .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
+
+        // Check access permissions
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") && 
+            !leaveRequest.getUser().getId().equals(currentUser.getId())) {
+            throw new SecurityException("You can only view your own leave request comments");
+        }
+
+        // Simplified implementation - would query actual comments
+        List<CommentDto> comments = List.of();
+
+        return ResponseEntity.ok(comments);
+    }
+
+    @PostMapping("/{requestId}/comments")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    public ResponseEntity<CommentDto> addComment(
+            @PathVariable Long requestId,
+            @RequestBody CommentRequest commentRequest,
+            Authentication authentication) {
+        
+        LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
+                .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
+
+        // Check access permissions
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") && 
+            !leaveRequest.getUser().getId().equals(currentUser.getId())) {
+            throw new SecurityException("You can only comment on your own leave requests");
+        }
+
+        // Simplified implementation - would save to database
+        CommentDto comment = new CommentDto();
+        comment.setId((int) System.currentTimeMillis());
+        comment.setRequestId(requestId);
+        comment.setAuthorId(currentUser.getId());
+        comment.setAuthorName(currentUser.getName());
+        comment.setMessage(commentRequest.getMessage());
+        comment.setCreatedAt(LocalDateTime.now());
+
+        return ResponseEntity.status(201).body(comment);
+    }
+
+    @GetMapping("/{requestId}/attachments")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    public ResponseEntity<List<AttachmentDto>> getAttachments(
+            @PathVariable Long requestId,
+            Authentication authentication) {
+        
+        LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
+                .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
+
+        // Check access permissions
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") && 
+            !leaveRequest.getUser().getId().equals(currentUser.getId())) {
+            throw new SecurityException("You can only view your own leave request attachments");
+        }
+
+        // Simplified implementation - would query actual attachments
+        List<AttachmentDto> attachments = List.of();
+
+        return ResponseEntity.ok(attachments);
+    }
+
+    @PostMapping("/{requestId}/attachments")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    public ResponseEntity<AttachmentDto> uploadAttachment(
+            @PathVariable Long requestId,
+            @RequestParam("file") org.springframework.web.multipart.MultipartFile file,
+            Authentication authentication) {
+        
+        // Check file size (10 MB limit as per OpenAPI spec)
+        long maxSize = 10 * 1024 * 1024; // 10 MB in bytes
+        if (file.getSize() > maxSize) {
+            throw new BusinessRuleException("File size exceeds the 10 MB limit");
+        }
+
+        LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
+                .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
+
+        // Check access permissions
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") && 
+            !leaveRequest.getUser().getId().equals(currentUser.getId())) {
+            throw new SecurityException("You can only upload attachments to your own leave requests");
+        }
+
+        // Simplified implementation - would upload to storage service
+        AttachmentDto attachment = new AttachmentDto();
+        attachment.setId((int) System.currentTimeMillis());
+        attachment.setFileName(file.getOriginalFilename());
+        attachment.setContentType(file.getContentType());
+        attachment.setSizeBytes(file.getSize());
+        attachment.setUploadedBy(currentUser.getId());
+        attachment.setUploadedAt(LocalDateTime.now());
+        attachment.setDownloadUrl("/uploads/attachments/" + requestId + "/" + file.getOriginalFilename());
+
+        return ResponseEntity.status(201).body(attachment);
+    }
+
+    @GetMapping("/{requestId}/pdf")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    public ResponseEntity<?> downloadRequestPdf(
+            @PathVariable Long requestId,
+            Authentication authentication) {
+        
+        LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
+                .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
+
+        // Check access permissions
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") && 
+            !leaveRequest.getUser().getId().equals(currentUser.getId())) {
+            throw new SecurityException("You can only download your own leave request PDFs");
+        }
+
+        // Simplified implementation - would generate actual PDF
+        // In real implementation, return PDF file stream
+        return ResponseEntity.ok().build();
+    }
+
+    @GetMapping("/export")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    public ResponseEntity<?> exportLeaveRequests(
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) Integer categoryId,
+            @RequestParam(required = false) String fromDate,
+            @RequestParam(required = false) String toDate,
+            @RequestParam(defaultValue = "csv") String format,
+            Authentication authentication) {
+
+        // Simplified implementation - would generate actual export file
+        // In real implementation, return CSV/XLSX file stream
+        return ResponseEntity.ok().build();
+    }
+
     private LeaveRequestDto toLeaveRequestDto(LeaveRequest request) {
         LeaveRequestDto dto = new LeaveRequestDto();
         dto.setId(request.getId());
@@ -280,17 +469,5 @@ public class LeaveRequestsController {
         }
         dto.setAppliedAt(request.getAppliedAt());
         return dto;
-    }
-
-    public static class WithdrawRequest {
-        private String reason;
-
-        public String getReason() {
-            return reason;
-        }
-
-        public void setReason(String reason) {
-            this.reason = reason;
-        }
     }
 }

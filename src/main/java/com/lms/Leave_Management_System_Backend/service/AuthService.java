@@ -1,7 +1,13 @@
 package com.lms.Leave_Management_System_Backend.service;
 
+import com.lms.Leave_Management_System_Backend.dto.RegisterRequest;
 import com.lms.Leave_Management_System_Backend.dto.UserDto;
+import com.lms.Leave_Management_System_Backend.exception.ConflictException;
+import com.lms.Leave_Management_System_Backend.model.Department;
+import com.lms.Leave_Management_System_Backend.model.Role;
 import com.lms.Leave_Management_System_Backend.model.User;
+import com.lms.Leave_Management_System_Backend.repository.DepartmentRepository;
+import com.lms.Leave_Management_System_Backend.repository.RoleRepository;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -16,6 +22,8 @@ public class AuthService {
 
     private final EmailService emailService;
     private final UserRepository userRepository;
+    private final DepartmentRepository departmentRepository;
+    private final RoleRepository roleRepository;
     private final BCryptPasswordEncoder passwordEncoder;
 
     /*
@@ -29,10 +37,14 @@ public class AuthService {
 
     public AuthService(
             EmailService emailService,
-            UserRepository userRepository) {
+            UserRepository userRepository,
+            DepartmentRepository departmentRepository,
+            RoleRepository roleRepository) {
 
         this.emailService = emailService;
         this.userRepository = userRepository;
+        this.departmentRepository = departmentRepository;
+        this.roleRepository = roleRepository;
         this.passwordEncoder = new BCryptPasswordEncoder();
     }
 
@@ -325,11 +337,55 @@ public class AuthService {
         }
         if (user.getReportsTo() != null) {
             userDto.setManagerId(user.getReportsTo().getId());
-            userDto.setManagerName(user.getReportsTo().getName());
+            // Safe getName() call with null check
+            String managerName = user.getReportsTo().getName();
+            userDto.setManagerName(managerName != null ? managerName : "Unknown");
         }
         userDto.setDateOfJoining(user.getDateOfJoining());
         userDto.setEmploymentStatus(user.getEmploymentStatus().name());
 
         return userDto;
+    }
+
+    // =========================================================
+    // REGISTER USER
+    // =========================================================
+
+    /**
+     * Register a new user (self-registration).
+     */
+    public UserDto registerUser(RegisterRequest request) {
+        // Check if email already exists
+        if (userRepository.findByEmailIgnoreCase(request.getEmail()).isPresent()) {
+            throw new ConflictException("Email already in use");
+        }
+
+        // Check if employee code already exists (if provided)
+        if (request.getEmployeeCode() != null && 
+            userRepository.findByEmployeeCode(request.getEmployeeCode()).isPresent()) {
+            throw new ConflictException("Employee code already in use");
+        }
+
+        // Get department
+        Department department = departmentRepository.findById(request.getDepartmentId())
+                .orElseThrow(() -> new ConflictException("Invalid department ID"));
+
+        // Get default role (EMPLOYEE)
+        Role employeeRole = roleRepository.findByRoleCode("EMPLOYEE")
+                .orElseThrow(() -> new ConflictException("Default EMPLOYEE role not found"));
+
+        // Create new user
+        User user = new User();
+        user.setName(request.getFullName());
+        user.setEmail(request.getEmail());
+        user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
+        user.setEmployeeCode(request.getEmployeeCode());
+        user.setDepartment(department);
+        user.setRole(employeeRole);
+        user.setEmploymentStatus(User.EmploymentStatus.ACTIVE);
+        user.setDateOfJoining(java.time.LocalDate.now());
+
+        User savedUser = userRepository.save(user);
+        return toUserDto(savedUser);
     }
 }

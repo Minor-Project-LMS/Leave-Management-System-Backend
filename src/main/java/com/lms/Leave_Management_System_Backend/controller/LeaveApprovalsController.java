@@ -82,44 +82,6 @@ public class LeaveApprovalsController {
         return ResponseEntity.ok(new ApiResponse<>(true, dto));
     }
 
-    @GetMapping("/pending-approvals")
-    @RequireRole({"MANAGER", "HR_ADMIN"})
-    public ResponseEntity<PaginatedResponse<LeaveRequestDto>> getPendingApprovals(
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size,
-            Authentication authentication) {
-        
-        String email = authentication.getName();
-        User currentUser = userRepository.findByEmailIgnoreCase(email)
-                .orElseThrow(() -> new ResourceNotFoundException("User", email));
-
-        org.springframework.data.domain.Pageable pageable = 
-            org.springframework.data.domain.PageRequest.of(page, size);
-        
-        var pendingL1 = leaveRequestRepository.findByCurrentApproverIdAndStatus(
-                currentUser.getId(), 
-                LeaveRequest.RequestStatus.PENDING_L1);
-        
-        var pendingL2 = leaveRequestRepository.findByCurrentApproverIdAndStatus(
-                currentUser.getId(), 
-                LeaveRequest.RequestStatus.PENDING_L2);
-        
-        pendingL1.addAll(pendingL2);
-        
-        var dtos = pendingL1.stream()
-                .map(this::toLeaveRequestDto)
-                .collect(java.util.stream.Collectors.toList());
-
-        PageResponse pageResponse = new PageResponse(
-                page,
-                size,
-                pendingL1.size(),
-                (int) Math.ceil((double) pendingL1.size() / size)
-        );
-
-        return ResponseEntity.ok(new PaginatedResponse<>(true, dtos, pageResponse));
-    }
-
     private LeaveRequestDto toLeaveRequestDto(LeaveRequest request) {
         LeaveRequestDto dto = new LeaveRequestDto();
         dto.setId(request.getId());

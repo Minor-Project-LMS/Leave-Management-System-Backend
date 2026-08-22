@@ -6,7 +6,17 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "leave_requests")
+@Table(name = "leave_requests", 
+    indexes = {
+        @jakarta.persistence.Index(name = "idx_user_id", columnList = "user_id"),
+        @jakarta.persistence.Index(name = "idx_category_id", columnList = "category_id"),
+        @jakarta.persistence.Index(name = "idx_current_approver_id", columnList = "current_approver_id"),
+        @jakarta.persistence.Index(name = "idx_status", columnList = "status"),
+        @jakarta.persistence.Index(name = "idx_start_date", columnList = "start_date"),
+        @jakarta.persistence.Index(name = "idx_end_date", columnList = "end_date"),
+        @jakarta.persistence.Index(name = "idx_user_status", columnList = "user_id, status")
+    }
+)
 public class LeaveRequest {
 
     @Id

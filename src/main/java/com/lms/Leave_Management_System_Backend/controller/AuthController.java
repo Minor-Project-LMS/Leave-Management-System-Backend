@@ -3,11 +3,15 @@ package com.lms.Leave_Management_System_Backend.controller;
 import com.lms.Leave_Management_System_Backend.dto.*;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
 import com.lms.Leave_Management_System_Backend.service.AuthService;
+import com.lms.Leave_Management_System_Backend.service.JwtBlacklistService;
 import com.lms.Leave_Management_System_Backend.service.JwtUtil;
 import com.lms.Leave_Management_System_Backend.service.RefreshTokenService;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -17,11 +21,17 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/auth")
+@SuppressWarnings("unchecked")
 public class AuthController {
+
+    private static final Logger log = LoggerFactory.getLogger(AuthController.class);
 
     private final AuthService authService;
     private final JwtUtil jwtUtil;
     private final RefreshTokenService refreshTokenService;
+
+    @Autowired
+    private JwtBlacklistService jwtBlacklistService;
 
     @Value("${cookie.same-site:Lax}")
     private String cookieSameSite;
@@ -64,7 +74,7 @@ public class AuthController {
         if (user == null) {
             return ResponseEntity
                     .status(HttpStatus.UNAUTHORIZED)
-                    .body(new ApiResponse<String>(
+                    .body(new ApiResponse<>(
                             false,
                             "Invalid email or password"
                     ));
@@ -118,7 +128,7 @@ public class AuthController {
         if (!valid) {
             return ResponseEntity
                     .badRequest()
-                    .body(new ApiResponse<String>(
+                    .body(new ApiResponse<>(
                             false,
                             "Invalid or expired OTP"
                     ));
@@ -143,7 +153,7 @@ public class AuthController {
         if (refreshToken == null || refreshToken.isBlank()) {
             return ResponseEntity
                     .status(HttpStatus.UNAUTHORIZED)
-                    .body(new ApiResponse<String>(
+                    .body(new ApiResponse<>(
                             false,
                             "Missing refresh token cookie"
                     ));
@@ -154,7 +164,7 @@ public class AuthController {
         if (userId == null) {
             return ResponseEntity
                     .status(HttpStatus.UNAUTHORIZED)
-                    .body(new ApiResponse<String>(
+                    .body(new ApiResponse<>(
                             false,
                             "Invalid or expired refresh token"
                     ));
@@ -180,7 +190,7 @@ public class AuthController {
 
             return ResponseEntity
                     .status(HttpStatus.UNAUTHORIZED)
-                    .body(new ApiResponse<String>(
+                    .body(new ApiResponse<>(
                             false,
                             "Session validation failed - possible security violation"
                     ));
@@ -190,7 +200,7 @@ public class AuthController {
         if (user == null) {
             return ResponseEntity
                     .status(HttpStatus.UNAUTHORIZED)
-                    .body(new ApiResponse<String>(
+                    .body(new ApiResponse<>(
                             false,
                             "User not found"
                     ));
@@ -212,7 +222,7 @@ public class AuthController {
 
             return ResponseEntity
                     .status(HttpStatus.UNAUTHORIZED)
-                    .body(new ApiResponse<String>(
+                    .body(new ApiResponse<>(
                             false,
                             "Session expired or security violation detected - please login again"
                     ));
@@ -256,38 +266,62 @@ public class AuthController {
             HttpServletRequest request,
             HttpServletResponse response) {
 
-        String refreshToken = extractRefreshTokenFromCookie(request);
-        if (refreshToken != null && !refreshToken.isBlank()) {
-            // CRITICAL: Validate session before logout to prevent cookie theft attacks
-            String userId = refreshTokenService.getUserIdByToken(refreshToken);
-            if (userId != null) {
-                if (!refreshTokenService.validateTokenWithSession(refreshToken, userId, request)) {
-                    // Session validation failed - cookie theft suspected
-                    // Still clear the cookie but don't reveal specific error
-                    Cookie cookie = new Cookie("refreshToken", "");
-                    cookie.setHttpOnly(true);
-                    cookie.setSecure(false);
-                    cookie.setPath("/api/v1/auth");
-                    cookie.setMaxAge(0);
-                    cookie.setAttribute("SameSite", cookieSameSite);
-                    response.addCookie(cookie);
+        log.info("Logout request received");
 
-                    return ResponseEntity.noContent().build();
-                }
+        // Blacklist the current access token if present
+        String authHeader = request.getHeader("Authorization");
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            String accessToken = authHeader.substring(7);
+            log.info("Access token found in Authorization header");
+            
+            if (jwtBlacklistService != null) {
+                long remainingTime = jwtUtil.getRemainingExpirationTime(accessToken);
+                log.info("Token remaining time: {} seconds", remainingTime);
                 
-                // Revoke all tokens in the session family for security
-                String sessionId = refreshTokenService.getSessionIdByToken(refreshToken);
-                if (sessionId != null) {
-                    refreshTokenService.revokeAllTokensInSession(sessionId);
+                if (remainingTime > 0) {
+                    jwtBlacklistService.blacklistToken(accessToken, remainingTime);
+                    log.info("Access token blacklisted successfully");
                 } else {
-                    refreshTokenService.revoke(refreshToken);
+                    log.warn("Token has no remaining time, skipping blacklist");
                 }
             } else {
-                refreshTokenService.revoke(refreshToken);
+                log.warn("JwtBlacklistService is not available - token cannot be blacklisted");
             }
+        } else {
+            log.warn("No access token found in Authorization header");
         }
 
-        // Clear the refresh token cookie scoped to /api/v1/auth
+        // Revoke refresh token
+        String refreshToken = extractRefreshTokenFromCookie(request);
+        if (refreshToken != null && !refreshToken.isBlank()) {
+            try {
+                // CRITICAL: Validate session before logout to prevent cookie theft attacks
+                String userId = refreshTokenService.getUserIdByToken(refreshToken);
+                if (userId != null) {
+                    if (refreshTokenService.validateTokenWithSession(refreshToken, userId, request)) {
+                        // Revoke all tokens in the session family for security
+                        String sessionId = refreshTokenService.getSessionIdByToken(refreshToken);
+                        if (sessionId != null) {
+                            refreshTokenService.revokeAllTokensInSession(sessionId);
+                            log.info("All tokens in session {} revoked", sessionId);
+                        } else {
+                            refreshTokenService.revoke(refreshToken);
+                            log.info("Refresh token revoked");
+                        }
+                    }
+                } else {
+                    refreshTokenService.revoke(refreshToken);
+                    log.info("Refresh token revoked (no user ID found)");
+                }
+            } catch (Exception ex) {
+                log.error("Logout revocation failed", ex);
+            }
+        } else {
+            log.warn("No refresh token found in cookies");
+        }
+
+        // Clear the refresh token cookie scoped to /api/v1/auth.
+        // This now always runs, regardless of what happened above.
         Cookie cookie = new Cookie("refreshToken", "");
         cookie.setHttpOnly(true);
         cookie.setSecure(false);
@@ -296,6 +330,31 @@ public class AuthController {
         cookie.setAttribute("SameSite", cookieSameSite);
         response.addCookie(cookie);
 
+        // Add header to instruct client to clear access token
+        response.setHeader("X-Clear-Auth", "true");
+
+        log.info("Logout completed successfully");
         return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/register")
+    public ResponseEntity<?> register(@RequestBody RegisterRequest req) {
+        // Check if self-registration is enabled (would check system settings in real implementation)
+        boolean selfRegistrationEnabled = false; // Default disabled per OpenAPI spec
+
+        if (!selfRegistrationEnabled) {
+            return ResponseEntity
+                    .status(HttpStatus.FORBIDDEN)
+                    .body(new ApiErrorResponse(
+                            "SELF_REGISTRATION_DISABLED",
+                            "Contact HR to get enabled.",
+                            "/auth/register"
+                    ));
+        }
+
+        // Validate and create user
+        UserDto user = authService.registerUser(req);
+
+        return ResponseEntity.status(HttpStatus.CREATED).body(user);
     }
 }

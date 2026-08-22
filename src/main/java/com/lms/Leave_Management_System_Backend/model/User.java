@@ -5,7 +5,15 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "app_users")
+@Table(name = "app_users", 
+    indexes = {
+        @jakarta.persistence.Index(name = "idx_employee_code", columnList = "employee_code"),
+        @jakarta.persistence.Index(name = "idx_email", columnList = "email"),
+        @jakarta.persistence.Index(name = "idx_department_id", columnList = "department_id"),
+        @jakarta.persistence.Index(name = "idx_reports_to", columnList = "reports_to"),
+        @jakarta.persistence.Index(name = "idx_employment_status", columnList = "employment_status")
+    }
+)
 public class User {
 
     @Id
@@ -25,7 +33,7 @@ public class User {
     @Column(name = "password_hash", nullable = false)
     private String passwordHash;
 
-    @ManyToOne(fetch = FetchType.EAGER, optional = false)
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "role_id", nullable = false)
     private Role role;
 
@@ -49,6 +57,33 @@ public class User {
 
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
+
+    @Column(name = "avatar_url")
+    private String avatarUrl;
+
+    @Column(name = "phone")
+    private String phone;
+
+    @Column(name = "date_of_birth")
+    private LocalDate dateOfBirth;
+
+    @Column(name = "gender")
+    private String gender;
+
+    @Column(name = "blood_group")
+    private String bloodGroup;
+
+    @Column(name = "address")
+    private String address;
+
+    @Column(name = "designation")
+    private String designation;
+
+    @Column(name = "work_location")
+    private String workLocation;
+
+    @Column(name = "employment_type")
+    private String employmentType;
 
     public enum EmploymentStatus {
         ACTIVE, ON_LEAVE, SEPARATED
@@ -151,6 +186,78 @@ public class User {
 
     public void setUpdatedAt(LocalDateTime updatedAt) {
         this.updatedAt = updatedAt;
+    }
+
+    public String getAvatarUrl() {
+        return avatarUrl;
+    }
+
+    public void setAvatarUrl(String avatarUrl) {
+        this.avatarUrl = avatarUrl;
+    }
+
+    public String getPhone() {
+        return phone;
+    }
+
+    public void setPhone(String phone) {
+        this.phone = phone;
+    }
+
+    public LocalDate getDateOfBirth() {
+        return dateOfBirth;
+    }
+
+    public void setDateOfBirth(LocalDate dateOfBirth) {
+        this.dateOfBirth = dateOfBirth;
+    }
+
+    public String getGender() {
+        return gender;
+    }
+
+    public void setGender(String gender) {
+        this.gender = gender;
+    }
+
+    public String getBloodGroup() {
+        return bloodGroup;
+    }
+
+    public void setBloodGroup(String bloodGroup) {
+        this.bloodGroup = bloodGroup;
+    }
+
+    public String getAddress() {
+        return address;
+    }
+
+    public void setAddress(String address) {
+        this.address = address;
+    }
+
+    public String getDesignation() {
+        return designation;
+    }
+
+    public void setDesignation(String designation) {
+        this.designation = designation;
+    }
+
+    public String getWorkLocation() {
+        return workLocation;
+    }
+
+    public void setWorkLocation(String workLocation) {
+        this.workLocation = workLocation;
+    }
+
+    public String getEmploymentType() {
+        return employmentType;
+    }
+
+    public void setEmploymentType(String employmentType) {
+        this.employmentType = employmentType;
     }
 
     @PrePersist

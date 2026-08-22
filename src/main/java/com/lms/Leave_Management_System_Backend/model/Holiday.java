@@ -4,7 +4,7 @@ import jakarta.persistence.*;
 import java.time.LocalDate;
 
 @Entity
-@Table(name = "org_holidays")
+@Table(name = "holiday_calendar")
 public class Holiday {
 
     @Id
@@ -18,8 +18,12 @@ public class Holiday {
     @Column(name = "holiday_date", nullable = false)
     private LocalDate date;
 
-    @Column(name = "is_recurring", nullable = false)
-    private boolean recurring;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "department_id")
+    private Department department;
+
+    @Column(name = "is_restricted", nullable = false)
+    private boolean restricted;
 
     public Holiday() {
     }
@@ -48,11 +52,19 @@ public class Holiday {
         this.date = date;
     }
 
-    public boolean isRecurring() {
-        return recurring;
+    public Department getDepartment() {
+        return department;
     }
 
-    public void setRecurring(boolean recurring) {
-        this.recurring = recurring;
+    public void setDepartment(Department department) {
+        this.department = department;
+    }
+
+    public boolean isRestricted() {
+        return restricted;
+    }
+
+    public void setRestricted(boolean restricted) {
+        this.restricted = restricted;
     }
 }

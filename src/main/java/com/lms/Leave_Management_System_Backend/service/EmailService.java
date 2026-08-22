@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -21,12 +22,14 @@ public class EmailService {
         this.mailSender = mailSender;
     }
 
+    @Async("taskExecutor")
     public void sendOtpEmail(String to, String otp) {
         String subject = "LMS Password Reset OTP";
         String body = "Your OTP for password reset is: " + otp + "\n\nThis code is valid for 5 minutes.";
         sendSimpleEmail(to, subject, body);
     }
 
+    @Async("taskExecutor")
     public void sendSimpleEmail(String to, String subject, String body) {
         if (to == null || to.isBlank()) {
             log.warn("Email recipient is blank. Skipping send.");

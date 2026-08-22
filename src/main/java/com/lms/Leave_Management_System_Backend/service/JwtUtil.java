@@ -7,6 +7,9 @@ import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
 import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -19,6 +22,8 @@ import java.util.Map;
 @Component
 public class JwtUtil {
 
+    private static final Logger log = LoggerFactory.getLogger(JwtUtil.class);
+
     @Value("${jwt.secret}")
     private String secret;
 
@@ -29,6 +34,9 @@ public class JwtUtil {
     private long refreshExpirySeconds;
 
     private Key key;
+
+    @Autowired
+    private JwtBlacklistService jwtBlacklistService;
 
     @PostConstruct
     public void init() {
@@ -73,12 +81,27 @@ public class JwtUtil {
 
     public boolean validateToken(String token) {
         if (token == null || token.isBlank()) {
+            log.debug("Token validation failed: null or blank token");
             return false;
         }
+        
+        // Check if token is blacklisted
+        if (jwtBlacklistService != null) {
+            boolean isBlacklisted = jwtBlacklistService.isTokenBlacklisted(token);
+            if (isBlacklisted) {
+                log.warn("Token validation failed: token is blacklisted");
+                return false;
+            }
+        } else {
+            log.debug("JwtBlacklistService is not available - blacklist check skipped");
+        }
+        
         try {
             Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token);
+            log.debug("Token validation successful");
             return true;
         } catch (Exception ex) {
+            log.warn("Token validation failed: {}", ex.getMessage());
             return false;
         }
     }
@@ -96,6 +119,23 @@ public class JwtUtil {
             return getEmailFromToken(token);
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    /**
+     * Get the remaining time in seconds until token expiration
+     * @param token The JWT token
+     * @return Remaining seconds, or 0 if token is invalid/expired
+     */
+    public long getRemainingExpirationTime(String token) {
+        try {
+            Claims claims = getClaims(token);
+            Date expiration = claims.getExpiration();
+            Date now = new Date();
+            long remainingMillis = expiration.getTime() - now.getTime();
+            return Math.max(0, remainingMillis / 1000);
+        } catch (Exception e) {
+            return 0;
         }
     }
 }

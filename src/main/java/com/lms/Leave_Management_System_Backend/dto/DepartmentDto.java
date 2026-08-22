@@ -2,16 +2,17 @@ package com.lms.Leave_Management_System_Backend.dto;
 
 public class DepartmentDto {
     private Integer id;
-    private String name;
+    private String departmentName;
     private Long departmentHeadId;
     private String departmentHeadName;
+    private Integer memberCount;
 
     public DepartmentDto() {
     }
 
     public DepartmentDto(Integer id, String name) {
         this.id = id;
-        this.name = name;
+        this.departmentName = name;
     }
 
     public Integer getId() {
@@ -22,12 +23,12 @@ public class DepartmentDto {
         this.id = id;
     }
 
-    public String getName() {
-        return name;
+    public String getDepartmentName() {
+        return departmentName;
     }
 
-    public void setName(String name) {
-        this.name = name;
+    public void setDepartmentName(String departmentName) {
+        this.departmentName = departmentName;
     }
 
     public Long getDepartmentHeadId() {
@@ -44,5 +45,22 @@ public class DepartmentDto {
 
     public void setDepartmentHeadName(String departmentHeadName) {
         this.departmentHeadName = departmentHeadName;
+    }
+
+    public Integer getMemberCount() {
+        return memberCount;
+    }
+
+    public void setMemberCount(Integer memberCount) {
+        this.memberCount = memberCount;
+    }
+
+    // Backward compatibility
+    public String getName() {
+        return departmentName;
+    }
+
+    public void setName(String name) {
+        this.departmentName = name;
     }
 }

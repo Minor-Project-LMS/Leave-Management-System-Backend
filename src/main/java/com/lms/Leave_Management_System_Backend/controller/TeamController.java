@@ -5,10 +5,14 @@ import com.lms.Leave_Management_System_Backend.exception.ResourceNotFoundExcepti
 import com.lms.Leave_Management_System_Backend.model.User;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -24,73 +28,140 @@ public class TeamController {
 
     @GetMapping("/members")
     @RequireRole({"MANAGER", "HR_ADMIN"})
-    public ResponseEntity<ApiResponse<List<UserDto>>> getTeamMembers(Authentication authentication) {
+    public ResponseEntity<PaginatedResponse<TeamMember>> listTeamMembers(
+            @RequestParam(required = false) Integer departmentId,
+            @RequestParam(required = false) String q,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int limit,
+            Authentication authentication) {
+        
         String email = authentication.getName();
         User currentUser = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
 
-        List<User> teamMembers = userRepository.findByReportsToId(currentUser.getId());
-        
-        List<UserDto> memberDtos = teamMembers.stream()
-                .map(this::toUserDto)
+        Pageable pageable = PageRequest.of(page, limit, Sort.by("name").ascending());
+
+        List<User> teamMembers;
+        if (currentUser.getRole().getRoleCode().equals("MANAGER")) {
+            // Managers see their direct reports
+            teamMembers = userRepository.findByReportsToId(currentUser.getId());
+        } else {
+            // HR can see all employees
+            teamMembers = userRepository.findAll();
+        }
+
+        // Apply filters
+        if (departmentId != null) {
+            teamMembers = teamMembers.stream()
+                    .filter(u -> u.getDepartment() != null && u.getDepartment().getId().equals(departmentId))
+                    .collect(Collectors.toList());
+        }
+
+        if (q != null && !q.isEmpty()) {
+            String searchLower = q.toLowerCase();
+            teamMembers = teamMembers.stream()
+                    .filter(u -> u.getName().toLowerCase().contains(searchLower) ||
+                               u.getEmail().toLowerCase().contains(searchLower) ||
+                               (u.getEmployeeCode() != null && u.getEmployeeCode().toLowerCase().contains(searchLower)))
+                    .collect(Collectors.toList());
+        }
+
+        // Apply pagination manually
+        int start = page * limit;
+        int end = Math.min(start + limit, teamMembers.size());
+        List<User> paginatedMembers = teamMembers.subList(start, end);
+
+        List<TeamMember> memberDtos = paginatedMembers.stream()
+                .map(this::toTeamMember)
                 .collect(Collectors.toList());
-        
-        return ResponseEntity.ok(new ApiResponse<>(true, memberDtos));
+
+        PageResponse pageResponse = new PageResponse(page, limit, teamMembers.size(), 
+                (int) Math.ceil((double) teamMembers.size() / limit));
+
+        return ResponseEntity.ok(new PaginatedResponse<>(true, memberDtos, pageResponse));
     }
 
-    @GetMapping("/members/{memberId}/leave-balance")
+    @GetMapping("/calendar")
     @RequireRole({"MANAGER", "HR_ADMIN"})
-    public ResponseEntity<ApiResponse<java.util.Map<String, Object>>> getTeamMemberLeaveBalance(
-            @PathVariable Long memberId,
+    public ResponseEntity<List<TeamCalendarDay>> getTeamCalendar(
+            @RequestParam int month,
+            @RequestParam int year,
+            @RequestParam(required = false) Integer departmentId,
+            @RequestParam(required = false) Integer categoryId,
+            @RequestParam(defaultValue = "false") boolean showWeekends,
             Authentication authentication) {
         
-        User member = userRepository.findById(memberId)
-                .orElseThrow(() -> new ResourceNotFoundException("User", memberId));
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
 
-        // Simplified implementation
-        java.util.Map<String, Object> balance = new java.util.HashMap<>();
-        balance.put("userId", member.getId());
-        balance.put("userName", member.getName());
-        balance.put("balances", java.util.Map.of(
-                "ANNUAL", 12.0,
-                "SICK", 6.0,
-                "CASUAL", 3.0
-        ));
+        // Simplified implementation - would query actual team calendar data
+        List<TeamCalendarDay> calendarDays = List.of(
+                createTeamCalendarDay(LocalDate.of(year, month, 1), List.of()),
+                createTeamCalendarDay(LocalDate.of(year, month, 15), List.of(
+                        createTeamCalendarEntry(1L, "John Doe", "/avatar1.jpg", 1, "Casual Leave", "FULL_DAY")
+                ))
+        );
 
-        return ResponseEntity.ok(new ApiResponse<>(true, balance));
+        return ResponseEntity.ok(calendarDays);
     }
 
-    @GetMapping("/members/{memberId}/leave-requests")
+    @GetMapping("/leave-summary")
     @RequireRole({"MANAGER", "HR_ADMIN"})
-    public ResponseEntity<ApiResponse<List<UserDto>>> getTeamMemberLeaveRequests(
-            @PathVariable Long memberId,
-            @RequestParam(required = false) String status) {
+    public ResponseEntity<List<TeamLeaveSummary>> getTeamLeaveSummary(
+            @RequestParam(required = false) Integer year,
+            @RequestParam(required = false) Integer month,
+            Authentication authentication) {
         
-        User member = userRepository.findById(memberId)
-                .orElseThrow(() -> new ResourceNotFoundException("User", memberId));
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
 
-        // Simplified - return user info
-        UserDto userDto = toUserDto(member);
-        return ResponseEntity.ok(new ApiResponse<>(true, List.of(userDto)));
+        // Simplified implementation - would query actual team leave summary
+        List<TeamLeaveSummary> summary = List.of(
+                new TeamLeaveSummary(1, "Casual Leave", 12.0),
+                new TeamLeaveSummary(2, "Sick Leave", 6.0),
+                new TeamLeaveSummary(3, "Annual Leave", 18.0)
+        );
+
+        return ResponseEntity.ok(summary);
     }
 
-    private UserDto toUserDto(User user) {
-        UserDto dto = new UserDto();
-        dto.setId(user.getId());
-        dto.setName(user.getName());
-        dto.setEmail(user.getEmail());
-        dto.setRole(user.getRole().getRoleCode());
-        dto.setEmployeeCode(user.getEmployeeCode());
+    private TeamMember toTeamMember(User user) {
+        TeamMember member = new TeamMember();
+        member.setId(user.getId());
+        member.setEmployeeCode(user.getEmployeeCode());
+        member.setFullName(user.getName());
         if (user.getDepartment() != null) {
-            dto.setDepartmentId(user.getDepartment().getId());
-            dto.setDepartmentName(user.getDepartment().getName());
+            member.setDepartmentId(user.getDepartment().getId());
+            // Safe getName() call with null check
+            String deptName = user.getDepartment().getName();
+            member.setDepartmentName(deptName != null ? deptName : "Unknown");
         }
-        if (user.getReportsTo() != null) {
-            dto.setManagerId(user.getReportsTo().getId());
-            dto.setManagerName(user.getReportsTo().getName());
-        }
-        dto.setDateOfJoining(user.getDateOfJoining());
-        dto.setEmploymentStatus(user.getEmploymentStatus().name());
-        return dto;
+        member.setDesignation(user.getDesignation());
+        member.setEmail(user.getEmail());
+        member.setPhone(user.getPhone());
+        member.setStatus(user.getEmploymentStatus().name());
+        member.setAvatarUrl(user.getAvatarUrl());
+        return member;
+    }
+
+    private TeamCalendarDay createTeamCalendarDay(LocalDate date, List<TeamCalendarEntry> entries) {
+        TeamCalendarDay day = new TeamCalendarDay();
+        day.setDate(date);
+        day.setEntries(entries);
+        return day;
+    }
+
+    private TeamCalendarEntry createTeamCalendarEntry(Long userId, String fullName, String avatarUrl, 
+                                                     Integer categoryId, String categoryName, String sessionType) {
+        TeamCalendarEntry entry = new TeamCalendarEntry();
+        entry.setUserId(userId);
+        entry.setFullName(fullName);
+        entry.setAvatarUrl(avatarUrl);
+        entry.setCategoryId(categoryId);
+        entry.setCategoryName(categoryName);
+        entry.setSessionType(sessionType);
+        return entry;
     }
 }

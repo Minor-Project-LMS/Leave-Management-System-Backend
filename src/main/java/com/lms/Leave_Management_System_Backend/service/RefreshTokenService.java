@@ -1,9 +1,10 @@
 package com.lms.Leave_Management_System_Backend.service;
 
 import com.lms.Leave_Management_System_Backend.model.RefreshToken;
-import com.lms.Leave_Management_System_Backend.repository.RefreshTokenRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -12,25 +13,42 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.util.Base64;
+import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 /**
  * Redis-backed refresh token service with Refresh Token Rotation (RTR) and breach detection.
  * Implements session fingerprinting, token rotation, and replay attack prevention.
+ * Storage layout in Redis:
+ *  - refresh_token:{hashedToken}          -> RefreshToken object (the token record itself)
+ *  - refresh_token:user:{userId}          -> Set<hashedToken>  (index for revokeByUserId)
+ *  - refresh_token:session:{sessionId}    -> Set<hashedToken>  (index for revokeAllTokensInSession)
+ * The index sets let us avoid an expensive KEYS/SCAN over the whole keyspace when we
+ * need to revoke "all tokens for this user" or "all tokens in this session family".
  */
 @Service
 public class RefreshTokenService {
 
-    private final RefreshTokenRepository refreshTokenRepository;
+    private static final String TOKEN_KEY_PREFIX = "refresh_token:";
+    private static final String USER_INDEX_PREFIX = "refresh_token:user:";
+    private static final String SESSION_INDEX_PREFIX = "refresh_token:session:";
+
+    private final RedisTemplate<String, RefreshToken> redisTemplate;
+    private final StringRedisTemplate stringRedisTemplate;
     private final SecureRandom secureRandom;
 
-    @Value("${jwt.refresh_expiration_seconds:18000}")
+    @Value("${jwt.refresh_expiration_seconds : 18000}")
     private long refreshExpirySeconds;
 
     @Autowired
-    public RefreshTokenService(RefreshTokenRepository refreshTokenRepository) {
-        this.refreshTokenRepository = refreshTokenRepository;
+    public RefreshTokenService(RedisTemplate<String, RefreshToken> redisTemplate) {
+        // Use the injected, already-configured template instead of constructing a new,
+        // disconnected one.
+        this.redisTemplate = redisTemplate;
+        this.stringRedisTemplate = new StringRedisTemplate(Objects.requireNonNull(redisTemplate.getConnectionFactory()));
         this.secureRandom = new SecureRandom();
     }
 
@@ -59,8 +77,42 @@ public class RefreshTokenService {
     }
 
     private String generateSessionId() {
-        return UUID.randomUUID().toString();
+        byte[] randomByte = new byte[32];
+        secureRandom.nextBytes(randomByte);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(randomByte);
     }
+
+    // ---------- Redis helpers ----------
+
+    private RefreshToken findByHashedToken(String hashedToken) {
+        return redisTemplate.opsForValue().get(TOKEN_KEY_PREFIX + hashedToken);
+    }
+
+    /** Persist/overwrite a token record, re-deriving its TTL from expirationTime. */
+    private void saveToken(String hashedToken, RefreshToken refreshToken) {
+        long ttlSeconds = Math.max(1, (refreshToken.getExpirationTime() - System.currentTimeMillis()) / 1000);
+        redisTemplate.opsForValue().set(TOKEN_KEY_PREFIX + hashedToken, refreshToken, Duration.ofSeconds(ttlSeconds));
+    }
+
+    /** Remove a token record and clean up its entries in the user/session index sets. */
+    private void deleteToken(String hashedToken, RefreshToken refreshToken) {
+        redisTemplate.delete(TOKEN_KEY_PREFIX + hashedToken);
+        if (refreshToken != null) {
+            stringRedisTemplate.opsForSet().remove(USER_INDEX_PREFIX + refreshToken.getUserId(), hashedToken);
+            if (refreshToken.getSessionId() != null) {
+                stringRedisTemplate.opsForSet().remove(SESSION_INDEX_PREFIX + refreshToken.getSessionId(), hashedToken);
+            }
+        }
+    }
+
+    private void indexToken(String hashedToken, String normalizedUserId, String sessionId) {
+        stringRedisTemplate.opsForSet().add(USER_INDEX_PREFIX + normalizedUserId, hashedToken);
+        stringRedisTemplate.expire(USER_INDEX_PREFIX + normalizedUserId, Duration.ofSeconds(refreshExpirySeconds));
+        stringRedisTemplate.opsForSet().add(SESSION_INDEX_PREFIX + sessionId, hashedToken);
+        stringRedisTemplate.expire(SESSION_INDEX_PREFIX + sessionId, Duration.ofSeconds(refreshExpirySeconds));
+    }
+
+    // ---------- Public API ----------
 
     /**
      * Store a refresh token with session fingerprinting and session family tracking.
@@ -73,17 +125,20 @@ public class RefreshTokenService {
         String hashedToken = hashToken(token);
         String sessionFingerprint = generateSessionFingerprint(request);
         String sessionId = generateSessionId();
+        String normalizedUserId = userId.toLowerCase();
         long expirationTime = System.currentTimeMillis() + (refreshExpirySeconds * 1000L);
-        
+
         RefreshToken refreshToken = new RefreshToken(
-            hashedToken, 
-            userId.toLowerCase(), 
-            expirationTime, 
-            refreshExpirySeconds,
-            sessionFingerprint,
-            sessionId
+                hashedToken,
+                normalizedUserId,
+                expirationTime,
+                refreshExpirySeconds,
+                sessionFingerprint,
+                sessionId
         );
-        refreshTokenRepository.save(refreshToken);
+
+        saveToken(hashedToken, refreshToken);
+        indexToken(hashedToken, normalizedUserId, sessionId);
     }
 
     /**
@@ -95,49 +150,51 @@ public class RefreshTokenService {
         }
 
         String hashedToken = hashToken(token);
-        return refreshTokenRepository.findById(hashedToken)
-                .map(refreshToken -> {
-                    // Check if token has been revoked (replay detection)
-                    if (refreshToken.isRevoked()) {
-                        return false;
-                    }
-                    
-                    // Check if token belongs to the correct user
-                    if (!refreshToken.getUserId().equalsIgnoreCase(userId.toLowerCase())) {
-                        return false;
-                    }
-                    
-                    // Check session fingerprint if available
-                    if (!"no-fingerprint".equals(refreshToken.getSessionFingerprint())) {
-                        String currentFingerprint = generateSessionFingerprint(request);
-                        if (!currentFingerprint.equals(refreshToken.getSessionFingerprint())) {
-                            // Fingerprint mismatch - potential session hijacking
-                            // Trigger security response
-                            revokeAllTokensInSession(refreshToken.getSessionId());
-                            return false;
-                        }
-                    }
-                    
-                    // Check if token has expired
-                    long now = System.currentTimeMillis();
-                    if (now > refreshToken.getExpirationTime()) {
-                        refreshTokenRepository.deleteById(hashedToken);
-                        return false;
-                    }
-                    
-                    return true;
-                })
-                .orElse(false);
+        RefreshToken refreshToken = findByHashedToken(hashedToken);
+        if (refreshToken == null) {
+            return false;
+        }
+
+        // Check if token has been revoked (replay detection)
+        if (refreshToken.isRevoked()) {
+            return false;
+        }
+
+        // Check if token belongs to the correct user
+        if (!refreshToken.getUserId().equalsIgnoreCase(userId.toLowerCase())) {
+            return false;
+        }
+
+        // Check session fingerprint if available
+        if (!"no-fingerprint".equals(refreshToken.getSessionFingerprint())) {
+            String currentFingerprint = generateSessionFingerprint(request);
+            if (!currentFingerprint.equals(refreshToken.getSessionFingerprint())) {
+                // Fingerprint mismatch - potential session hijacking
+                revokeAllTokensInSession(refreshToken.getSessionId());
+                return false;
+            }
+        }
+
+        // Check if token has expired
+        long now = System.currentTimeMillis();
+        if (now > refreshToken.getExpirationTime()) {
+            deleteToken(hashedToken, refreshToken);
+            return false;
+        }
+
+        return true;
     }
 
     /**
      * Revoke a specific token.
      */
     public void revoke(String token) {
-        if (token != null) {
-            String hashedToken = hashToken(token);
-            refreshTokenRepository.deleteById(hashedToken);
+        if (token == null) {
+            return;
         }
+        String hashedToken = hashToken(token);
+        RefreshToken refreshToken = findByHashedToken(hashedToken);
+        deleteToken(hashedToken, refreshToken);
     }
 
     /**
@@ -148,30 +205,46 @@ public class RefreshTokenService {
             return;
         }
         String normalizedUserId = userId.toLowerCase();
-        refreshTokenRepository.findAll().forEach(refreshToken -> {
-            if (refreshToken != null && refreshToken.getUserId().equalsIgnoreCase(normalizedUserId)) {
-                refreshTokenRepository.delete(refreshToken);
+        String userIndexKey = USER_INDEX_PREFIX + normalizedUserId;
+
+        Set<String> hashedTokens = stringRedisTemplate.opsForSet().members(userIndexKey);
+        if (hashedTokens == null || hashedTokens.isEmpty()) {
+            return;
+        }
+
+        for (String hashedToken : hashedTokens) {
+            RefreshToken refreshToken = findByHashedToken(hashedToken);
+            redisTemplate.delete(TOKEN_KEY_PREFIX + hashedToken);
+            if (refreshToken != null && refreshToken.getSessionId() != null) {
+                stringRedisTemplate.opsForSet().remove(SESSION_INDEX_PREFIX + refreshToken.getSessionId(), hashedToken);
             }
-        });
+        }
+        stringRedisTemplate.delete(userIndexKey);
     }
 
     /**
-     * Revoke all tokens in a session family (atomic operation for breach response).
-     * Used when replay attack is detected.
+     * Revoke all tokens in a session family (breach response).
+     * Used when replay attack or fingerprint mismatch is detected.
      */
     @Transactional
     public void revokeAllTokensInSession(String sessionId) {
         if (sessionId == null) {
             return;
         }
-        
-        // Mark all tokens in this session as revoked
-        refreshTokenRepository.findAll().forEach(refreshToken -> {
-            if (refreshToken != null && sessionId.equals(refreshToken.getSessionId())) {
+        String sessionIndexKey = SESSION_INDEX_PREFIX + sessionId;
+
+        Set<String> hashedTokens = stringRedisTemplate.opsForSet().members(sessionIndexKey);
+        if (hashedTokens == null || hashedTokens.isEmpty()) {
+            return;
+        }
+
+        for (String hashedToken : hashedTokens) {
+            RefreshToken refreshToken = findByHashedToken(hashedToken);
+            if (refreshToken != null) {
                 refreshToken.setRevoked(true);
-                refreshTokenRepository.save(refreshToken);
+                saveToken(hashedToken, refreshToken);
             }
-        });
+        }
     }
 
     /**
@@ -184,42 +257,42 @@ public class RefreshTokenService {
         }
 
         String hashedToken = hashToken(token);
-        return refreshTokenRepository.findById(hashedToken)
-                .map(refreshToken -> {
-                    // Check if token has been revoked (replay detection)
-                    if (refreshToken.isRevoked()) {
-                        return false;
-                    }
-                    
-                    // Check if token belongs to the correct user
-                    if (!refreshToken.getUserId().equalsIgnoreCase(userId.toLowerCase())) {
-                        return false;
-                    }
-                    
-                    // CRITICAL: Check session fingerprint for cookie theft prevention
-                    if (!"no-fingerprint".equals(refreshToken.getSessionFingerprint())) {
-                        String currentFingerprint = generateSessionFingerprint(request);
-                        if (!currentFingerprint.equals(refreshToken.getSessionFingerprint())) {
-                            // Fingerprint mismatch - cookie theft detected
-                            // Revoke entire session family
-                            String sessionId = refreshToken.getSessionId();
-                            if (sessionId != null) {
-                                revokeAllTokensInSession(sessionId);
-                            }
-                            return false;
-                        }
-                    }
-                    
-                    // Check if token has expired
-                    long now = System.currentTimeMillis();
-                    if (now > refreshToken.getExpirationTime()) {
-                        refreshTokenRepository.deleteById(hashedToken);
-                        return false;
-                    }
-                    
-                    return true;
-                })
-                .orElse(false);
+        RefreshToken refreshToken = findByHashedToken(hashedToken);
+        if (refreshToken == null) {
+            return false;
+        }
+
+        // Check if token has been revoked (replay detection)
+        if (refreshToken.isRevoked()) {
+            return false;
+        }
+
+        // Check if token belongs to the correct user
+        if (!refreshToken.getUserId().equalsIgnoreCase(userId.toLowerCase())) {
+            return false;
+        }
+
+        // CRITICAL: Check session fingerprint for cookie theft prevention
+        if (!"no-fingerprint".equals(refreshToken.getSessionFingerprint())) {
+            String currentFingerprint = generateSessionFingerprint(request);
+            if (!currentFingerprint.equals(refreshToken.getSessionFingerprint())) {
+                // Fingerprint mismatch - cookie theft detected, revoke entire session family
+                String sessionId = refreshToken.getSessionId();
+                if (sessionId != null) {
+                    revokeAllTokensInSession(sessionId);
+                }
+                return false;
+            }
+        }
+
+        // Check if token has expired
+        long now = System.currentTimeMillis();
+        if (now > refreshToken.getExpirationTime()) {
+            deleteToken(hashedToken, refreshToken);
+            return false;
+        }
+
+        return true;
     }
 
     /**
@@ -229,11 +302,9 @@ public class RefreshTokenService {
         if (token == null) {
             return null;
         }
-        
         String hashedToken = hashToken(token);
-        return refreshTokenRepository.findById(hashedToken)
-                .map(RefreshToken::getUserId)
-                .orElse(null);
+        RefreshToken refreshToken = findByHashedToken(hashedToken);
+        return refreshToken != null ? refreshToken.getUserId() : null;
     }
 
     /**
@@ -243,11 +314,9 @@ public class RefreshTokenService {
         if (token == null) {
             return null;
         }
-        
         String hashedToken = hashToken(token);
-        return refreshTokenRepository.findById(hashedToken)
-                .map(RefreshToken::getSessionId)
-                .orElse(null);
+        RefreshToken refreshToken = findByHashedToken(hashedToken);
+        return refreshToken != null ? refreshToken.getSessionId() : null;
     }
 
     /**
@@ -261,15 +330,13 @@ public class RefreshTokenService {
         }
 
         String hashedOldToken = hashToken(oldToken);
-        
-        // Atomic check-and-delete to prevent race conditions
-        RefreshToken existingToken = refreshTokenRepository.findById(hashedOldToken).orElse(null);
-        
+        RefreshToken existingToken = findByHashedToken(hashedOldToken);
+
         if (existingToken == null) {
             // Token doesn't exist - either expired or already used (replay attack)
             return null;
         }
-        
+
         if (existingToken.isRevoked()) {
             // Token was already revoked - replay attack detected
             String sessionId = existingToken.getSessionId();
@@ -278,12 +345,12 @@ public class RefreshTokenService {
             }
             return null;
         }
-        
+
         // Verify user ownership
         if (!existingToken.getUserId().equalsIgnoreCase(userId.toLowerCase())) {
             return null;
         }
-        
+
         // Check fingerprint
         if (!"no-fingerprint".equals(existingToken.getSessionFingerprint())) {
             String currentFingerprint = generateSessionFingerprint(request);
@@ -296,36 +363,41 @@ public class RefreshTokenService {
                 return null;
             }
         }
-        
+
         // Check expiration
         long now = System.currentTimeMillis();
         if (now > existingToken.getExpirationTime()) {
-            refreshTokenRepository.deleteById(hashedOldToken);
+            deleteToken(hashedOldToken, existingToken);
             return null;
         }
-        
+
         // Mark old token as revoked BEFORE creating new one (atomic breach prevention)
         existingToken.setRevoked(true);
-        refreshTokenRepository.save(existingToken);
-        
+        saveToken(hashedOldToken, existingToken);
+
         // Generate new token in same session family
         String newToken = UUID.randomUUID().toString();
         String hashedNewToken = hashToken(newToken);
         long newExpirationTime = System.currentTimeMillis() + (refreshExpirySeconds * 1000L);
         String sessionFingerprint = generateSessionFingerprint(request);
-        
+        String normalizedUserId = userId.toLowerCase();
+        String sessionId = existingToken.getSessionId() != null
+                ? existingToken.getSessionId()
+                : generateSessionId(); // Keep same session family
+
         RefreshToken newRefreshToken = new RefreshToken(
-            hashedNewToken,
-            userId.toLowerCase(),
-            newExpirationTime,
-            refreshExpirySeconds,
-            sessionFingerprint,
-            existingToken.getSessionId() != null ? existingToken.getSessionId() : generateSessionId() // Keep same session family
+                hashedNewToken,
+                normalizedUserId,
+                newExpirationTime,
+                refreshExpirySeconds,
+                sessionFingerprint,
+                sessionId
         );
         newRefreshToken.setRotationCount(existingToken.getRotationCount() + 1);
-        
-        refreshTokenRepository.save(newRefreshToken);
-        
+
+        saveToken(hashedNewToken, newRefreshToken);
+        indexToken(hashedNewToken, normalizedUserId, sessionId);
+
         return newToken;
     }
 }

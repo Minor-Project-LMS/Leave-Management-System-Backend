@@ -6,7 +6,9 @@ public class HolidayDto {
     private Integer id;
     private String name;
     private LocalDate date;
-    private boolean recurring;
+    private Integer departmentId;
+    private String departmentName;
+    private boolean restricted;
 
     public HolidayDto() {
     }
@@ -35,11 +37,38 @@ public class HolidayDto {
         this.date = date;
     }
 
-    public boolean isRecurring() {
-        return recurring;
+    public Integer getDepartmentId() {
+        return departmentId;
     }
 
+    public void setDepartmentId(Integer departmentId) {
+        this.departmentId = departmentId;
+    }
+
+    public String getDepartmentName() {
+        return departmentName;
+    }
+
+    public void setDepartmentName(String departmentName) {
+        this.departmentName = departmentName;
+    }
+
+    public boolean isRestricted() {
+        return restricted;
+    }
+
+    public void setRestricted(boolean restricted) {
+        this.restricted = restricted;
+    }
+    
+    // Deprecated - kept for backward compatibility if needed
+    @Deprecated
+    public boolean isRecurring() {
+        return false;
+    }
+    
+    @Deprecated
     public void setRecurring(boolean recurring) {
-        this.recurring = recurring;
+        // No-op since we changed to restricted
     }
 }

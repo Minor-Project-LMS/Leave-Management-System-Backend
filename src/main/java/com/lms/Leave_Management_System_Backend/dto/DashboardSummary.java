@@ -1,73 +1,43 @@
 package com.lms.Leave_Management_System_Backend.dto;
 
-import java.math.BigDecimal;
-import java.util.Map;
-
 public class DashboardSummary {
-    private String userName;
-    private String role;
-    private String departmentName;
-    private Map<String, BigDecimal> leaveBalances;
-    private Integer pendingApprovalsCount;
-    private Integer upcomingLeavesCount;
-    private Integer teamOnLeaveToday;
+    private Double availableLeave;
+    private Double usedLeave;
+    private Integer pendingRequests;
+    private Double compOffBalance;
 
     public DashboardSummary() {
     }
 
-    public String getUserName() {
-        return userName;
+    public Double getAvailableLeave() {
+        return availableLeave;
     }
 
-    public void setUserName(String userName) {
-        this.userName = userName;
+    public void setAvailableLeave(Double availableLeave) {
+        this.availableLeave = availableLeave;
     }
 
-    public String getRole() {
-        return role;
+    public Double getUsedLeave() {
+        return usedLeave;
     }
 
-    public void setRole(String role) {
-        this.role = role;
+    public void setUsedLeave(Double usedLeave) {
+        this.usedLeave = usedLeave;
     }
 
-    public String getDepartmentName() {
-        return departmentName;
+    public Integer getPendingRequests() {
+        return pendingRequests;
     }
 
-    public void setDepartmentName(String departmentName) {
-        this.departmentName = departmentName;
+    public void setPendingRequests(Integer pendingRequests) {
+        this.pendingRequests = pendingRequests;
     }
 
-    public Map<String, BigDecimal> getLeaveBalances() {
-        return leaveBalances;
+    public Double getCompOffBalance() {
+        return compOffBalance;
     }
 
-    public void setLeaveBalances(Map<String, BigDecimal> leaveBalances) {
-        this.leaveBalances = leaveBalances;
-    }
-
-    public Integer getPendingApprovalsCount() {
-        return pendingApprovalsCount;
-    }
-
-    public void setPendingApprovalsCount(Integer pendingApprovalsCount) {
-        this.pendingApprovalsCount = pendingApprovalsCount;
-    }
-
-    public Integer getUpcomingLeavesCount() {
-        return upcomingLeavesCount;
-    }
-
-    public void setUpcomingLeavesCount(Integer upcomingLeavesCount) {
-        this.upcomingLeavesCount = upcomingLeavesCount;
-    }
-
-    public Integer getTeamOnLeaveToday() {
-        return teamOnLeaveToday;
-    }
-
-    public void setTeamOnLeaveToday(Integer teamOnLeaveToday) {
-        this.teamOnLeaveToday = teamOnLeaveToday;
+    public void setCompOffBalance(Double compOffBalance) {
+        this.compOffBalance = compOffBalance;
     }
 }

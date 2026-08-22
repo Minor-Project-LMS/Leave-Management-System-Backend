@@ -1,7 +1,7 @@
 package com.lms.Leave_Management_System_Backend.exception;
 
 import com.lms.Leave_Management_System_Backend.dto.ErrorResponse;
-import com.lms.Leave_Management_System_Backend.security.SecurityException;
+import com.lms.Leave_Management_System_Backend.exception.SecurityException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;

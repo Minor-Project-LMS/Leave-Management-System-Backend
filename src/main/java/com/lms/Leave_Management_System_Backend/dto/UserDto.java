@@ -14,6 +14,12 @@ public class UserDto {
     private String managerName;
     private LocalDate dateOfJoining;
     private String employmentStatus;
+    private String phone;
+    private String designation;
+    private String workLocation;
+    private String employmentType;
+    private Long reportsToId;
+    private String reportsToName;
 
     public UserDto() {
     }
@@ -117,5 +123,62 @@ public class UserDto {
 
     public void setEmploymentStatus(String employmentStatus) {
         this.employmentStatus = employmentStatus;
+    }
+
+    public String getPhone() {
+        return phone;
+    }
+
+    public void setPhone(String phone) {
+        this.phone = phone;
+    }
+
+    public String getDesignation() {
+        return designation;
+    }
+
+    public void setDesignation(String designation) {
+        this.designation = designation;
+    }
+
+    public String getWorkLocation() {
+        return workLocation;
+    }
+
+    public void setWorkLocation(String workLocation) {
+        this.workLocation = workLocation;
+    }
+
+    public String getEmploymentType() {
+        return employmentType;
+    }
+
+    public void setEmploymentType(String employmentType) {
+        this.employmentType = employmentType;
+    }
+
+    public Long getReportsToId() {
+        return reportsToId;
+    }
+
+    public void setReportsToId(Long reportsToId) {
+        this.reportsToId = reportsToId;
+    }
+
+    public String getReportsToName() {
+        return reportsToName;
+    }
+
+    public void setReportsToName(String reportsToName) {
+        this.reportsToName = reportsToName;
+    }
+
+    // Method to support both Long and Integer
+    public Integer getIdAsInteger() {
+        return id != null ? id.intValue() : null;
+    }
+
+    public void setIdAsInteger(Integer id) {
+        this.id = id != null ? id.longValue() : null;
     }
 }
