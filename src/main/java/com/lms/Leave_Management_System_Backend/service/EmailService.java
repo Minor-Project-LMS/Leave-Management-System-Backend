@@ -47,10 +47,7 @@ public class EmailService {
             mailSender.send(message);
             log.info("Email sent successfully to {}", to);
         } catch (Exception ex) {
-            log.error("Failed to send email to {}. Falling back to console output.", to, ex);
-            System.out.println("[EmailService] To: " + to);
-            System.out.println("[EmailService] Subject: " + subject);
-            System.out.println("[EmailService] Body: " + body);
+            log.error("Failed to send email to {}. Email details - Subject: {}, Body: {}", to, subject, body, ex);
         }
     }
 }

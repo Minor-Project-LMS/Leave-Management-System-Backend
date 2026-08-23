@@ -9,6 +9,8 @@ import com.lms.Leave_Management_System_Backend.model.User;
 import com.lms.Leave_Management_System_Backend.repository.DepartmentRepository;
 import com.lms.Leave_Management_System_Backend.repository.RoleRepository;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -19,6 +21,8 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class AuthService {
+
+    private static final Logger log = LoggerFactory.getLogger(AuthService.class);
 
     private final EmailService emailService;
     private final UserRepository userRepository;
@@ -182,14 +186,8 @@ public class AuthService {
 
         } catch (Exception ex) {
 
-            // Useful during local development
-            System.out.println(
-                    "[AuthService] OTP for "
-                            + normalizedEmail
-                            + " = "
-                            + otp
-                            + " (valid 5 minutes)"
-            );
+            // Log OTP for development/debugging purposes
+            log.warn("Failed to send OTP email to {}. OTP: {} (valid 5 minutes)", normalizedEmail, otp, ex);
         }
 
         return true;

@@ -3,6 +3,9 @@ package com.lms.Leave_Management_System_Backend.exception;
 import com.lms.Leave_Management_System_Backend.dto.ErrorResponse;
 import com.lms.Leave_Management_System_Backend.exception.SecurityException;
 import jakarta.servlet.http.HttpServletRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
@@ -19,8 +22,11 @@ import java.util.stream.Collectors;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
     @ExceptionHandler(BadCredentialsException.class)
     public ResponseEntity<ErrorResponse> handleBadCredentials(BadCredentialsException ex, HttpServletRequest request) {
+        log.warn("Authentication failed for request: {}", request.getRequestURI());
         ErrorResponse error = new ErrorResponse(
                 "INVALID_CREDENTIALS",
                 "Invalid email or password",
@@ -31,6 +37,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<ErrorResponse> handleAccessDenied(AccessDeniedException ex, HttpServletRequest request) {
+        log.warn("Access denied for request: {} - {}", request.getRequestURI(), ex.getMessage());
         ErrorResponse error = new ErrorResponse(
                 "ACCESS_DENIED",
                 "You do not have permission to access this resource",
@@ -41,6 +48,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(SecurityException.class)
     public ResponseEntity<ErrorResponse> handleSecurityException(SecurityException ex, HttpServletRequest request) {
+        log.warn("Security violation for request: {} - {}", request.getRequestURI(), ex.getMessage());
         ErrorResponse error = new ErrorResponse(
                 "SECURITY_VIOLATION",
                 ex.getMessage(),
@@ -51,6 +59,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(ResourceNotFoundException.class)
     public ResponseEntity<ErrorResponse> handleResourceNotFound(ResourceNotFoundException ex, HttpServletRequest request) {
+        log.info("Resource not found for request: {} - {}", request.getRequestURI(), ex.getMessage());
         ErrorResponse error = new ErrorResponse(
                 "RESOURCE_NOT_FOUND",
                 ex.getMessage(),
@@ -61,6 +70,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(BusinessRuleException.class)
     public ResponseEntity<ErrorResponse> handleBusinessRule(BusinessRuleException ex, HttpServletRequest request) {
+        log.info("Business rule violation for request: {} - {}", request.getRequestURI(), ex.getMessage());
         ErrorResponse error = new ErrorResponse(
                 "BUSINESS_RULE_VIOLATION",
                 ex.getMessage(),
@@ -71,6 +81,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(ConflictException.class)
     public ResponseEntity<ErrorResponse> handleConflict(ConflictException ex, HttpServletRequest request) {
+        log.info("Conflict for request: {} - {}", request.getRequestURI(), ex.getMessage());
         ErrorResponse error = new ErrorResponse(
                 "CONFLICT",
                 ex.getMessage(),
@@ -89,6 +100,7 @@ public class GlobalExceptionHandler {
                 ))
                 .collect(Collectors.toList());
 
+        log.info("Validation failed for request: {} - {} errors", request.getRequestURI(), fieldErrors.size());
         ErrorResponse error = new ErrorResponse(
                 "VALIDATION_ERROR",
                 "Validation failed",
@@ -100,6 +112,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     public ResponseEntity<ErrorResponse> handleTypeMismatch(MethodArgumentTypeMismatchException ex, HttpServletRequest request) {
+        log.info("Type mismatch for request: {} - parameter: {}", request.getRequestURI(), ex.getName());
         ErrorResponse error = new ErrorResponse(
                 "INVALID_PARAMETER",
                 "Invalid parameter: " + ex.getName(),
@@ -110,6 +123,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ErrorResponse> handleIllegalArgument(IllegalArgumentException ex, HttpServletRequest request) {
+        log.info("Invalid argument for request: {} - {}", request.getRequestURI(), ex.getMessage());
         ErrorResponse error = new ErrorResponse(
                 "INVALID_ARGUMENT",
                 ex.getMessage(),
@@ -120,6 +134,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleGeneric(Exception ex, HttpServletRequest request) {
+        log.error("Unexpected error for request: {}", request.getRequestURI(), ex);
         ErrorResponse error = new ErrorResponse(
                 "INTERNAL_SERVER_ERROR",
                 "An unexpected error occurred",
