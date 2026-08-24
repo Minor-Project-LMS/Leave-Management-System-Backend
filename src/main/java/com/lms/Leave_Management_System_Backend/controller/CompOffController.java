@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -58,7 +59,7 @@ public class CompOffController {
         
         compOffRequest.setDaysCredited(BigDecimal.valueOf(request.getDaysCredited()));
         compOffRequest.setStatus(CompOffRequest.RequestStatus.PENDING);
-        compOffRequest.setCreatedAt(LocalDate.now());
+        compOffRequest.setCreatedAt(LocalDateTime.now());
 
         // Set expiry date (e.g., 90 days from workedOn as per policy)
         compOffRequest.setExpiryDate(request.getWorkedOn().plusDays(90));
@@ -192,7 +193,7 @@ public class CompOffController {
             dto.setApprover(approverDto);
         }
         
-        dto.setCreatedAt(request.getCreatedAt());
+        dto.setCreatedAt(request.getCreatedAt().toLocalDate());
         return dto;
     }
 }

@@ -48,6 +48,7 @@ public class LeaveLedger {
     @Column(name = "closing_balance", nullable = false)
     private BigDecimal closingBalance = BigDecimal.ZERO;
 
+    // Additional fields for transaction tracking (not in original DB schema but used by controllers)
     @Column(name = "transaction_date")
     private java.time.LocalDate transactionDate;
 

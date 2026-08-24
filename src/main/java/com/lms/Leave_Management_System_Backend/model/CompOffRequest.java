@@ -3,6 +3,7 @@ package com.lms.Leave_Management_System_Backend.model;
 import jakarta.persistence.*;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "comp_off_requests")
@@ -33,7 +34,7 @@ public class CompOffRequest {
     private LocalDate expiryDate;
 
     @Column(name = "created_at")
-    private LocalDate createdAt;
+    private LocalDateTime createdAt;
 
     @Column(name = "status", nullable = false)
     @Enumerated(EnumType.STRING)
@@ -122,11 +123,11 @@ public class CompOffRequest {
         this.approver = approver;
     }
 
-    public LocalDate getCreatedAt() {
+    public LocalDateTime getCreatedAt() {
         return createdAt;
     }
 
-    public void setCreatedAt(LocalDate createdAt) {
+    public void setCreatedAt(LocalDateTime createdAt) {
         this.createdAt = createdAt;
     }
 }

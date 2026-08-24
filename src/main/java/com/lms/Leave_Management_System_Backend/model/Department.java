@@ -14,7 +14,7 @@ public class Department {
     private Integer id;
 
     @Column(name = "department_name", nullable = false)
-    private String name;
+    private String departmentName;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "department_head_id")
@@ -34,12 +34,21 @@ public class Department {
         this.id = id;
     }
 
+    public String getDepartmentName() {
+        return departmentName;
+    }
+
+    public void setDepartmentName(String departmentName) {
+        this.departmentName = departmentName;
+    }
+
+    // For backward compatibility
     public String getName() {
-        return name;
+        return departmentName;
     }
 
     public void setName(String name) {
-        this.name = name;
+        this.departmentName = name;
     }
 
     public User getDepartmentHead() {

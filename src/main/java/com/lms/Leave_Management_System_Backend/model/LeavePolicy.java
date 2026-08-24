@@ -36,7 +36,16 @@ public class LeavePolicy {
     @Column(name = "effective_from", nullable = false)
     private LocalDate effectiveFrom;
 
-    @Column(name = "status", nullable = false)
+    @Column(name = "policy_name")
+    private String policyName;
+
+    @Column(name = "policy_code")
+    private String policyCode;
+
+    @Column(name = "accrual_frequency")
+    private String accrualFrequency = "ANNUAL";
+
+    @Column(name = "status")
     private String status = "DRAFT";
 
     public LeavePolicy() {
@@ -104,6 +113,30 @@ public class LeavePolicy {
 
     public void setEffectiveFrom(LocalDate effectiveFrom) {
         this.effectiveFrom = effectiveFrom;
+    }
+
+    public String getPolicyName() {
+        return policyName;
+    }
+
+    public void setPolicyName(String policyName) {
+        this.policyName = policyName;
+    }
+
+    public String getPolicyCode() {
+        return policyCode;
+    }
+
+    public void setPolicyCode(String policyCode) {
+        this.policyCode = policyCode;
+    }
+
+    public String getAccrualFrequency() {
+        return accrualFrequency;
+    }
+
+    public void setAccrualFrequency(String accrualFrequency) {
+        this.accrualFrequency = accrualFrequency;
     }
 
     public String getStatus() {

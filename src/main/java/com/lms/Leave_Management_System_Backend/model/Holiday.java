@@ -13,17 +13,23 @@ public class Holiday {
     private Integer id;
 
     @Column(name = "holiday_name", nullable = false)
-    private String name;
+    private String holidayName;
 
     @Column(name = "holiday_date", nullable = false)
-    private LocalDate date;
+    private LocalDate holidayDate;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "department_id")
     private Department department;
 
     @Column(name = "is_restricted", nullable = false)
-    private boolean restricted;
+    private boolean isRestricted = false;
+
+    @Column(name = "holiday_type")
+    private String holidayType = "NATIONAL";
+
+    @Column(name = "location")
+    private String location;
 
     public Holiday() {
     }
@@ -36,20 +42,37 @@ public class Holiday {
         this.id = id;
     }
 
+    public String getHolidayName() {
+        return holidayName;
+    }
+
+    public void setHolidayName(String holidayName) {
+        this.holidayName = holidayName;
+    }
+
+    public LocalDate getHolidayDate() {
+        return holidayDate;
+    }
+
+    public void setHolidayDate(LocalDate holidayDate) {
+        this.holidayDate = holidayDate;
+    }
+
+    // For backward compatibility
     public String getName() {
-        return name;
+        return holidayName;
     }
 
     public void setName(String name) {
-        this.name = name;
+        this.holidayName = name;
     }
 
     public LocalDate getDate() {
-        return date;
+        return holidayDate;
     }
 
     public void setDate(LocalDate date) {
-        this.date = date;
+        this.holidayDate = date;
     }
 
     public Department getDepartment() {
@@ -61,10 +84,26 @@ public class Holiday {
     }
 
     public boolean isRestricted() {
-        return restricted;
+        return isRestricted;
     }
 
-    public void setRestricted(boolean restricted) {
-        this.restricted = restricted;
+    public void setRestricted(boolean isRestricted) {
+        this.isRestricted = isRestricted;
+    }
+
+    public String getHolidayType() {
+        return holidayType;
+    }
+
+    public void setHolidayType(String holidayType) {
+        this.holidayType = holidayType;
+    }
+
+    public String getLocation() {
+        return location;
+    }
+
+    public void setLocation(String location) {
+        this.location = location;
     }
 }

@@ -33,4 +33,4 @@ build/
 .vscode/
 .env
 /.docs/
-/lms_db_dev.sql
+*.sql

@@ -1,6 +1,8 @@
 package com.lms.Leave_Management_System_Backend.repository;
 
 import com.lms.Leave_Management_System_Backend.model.User;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -10,6 +12,14 @@ import java.util.List;
 import java.util.Optional;
 
 public interface UserRepository extends JpaRepository<User, Long> {
+
+    @EntityGraph(attributePaths = {"role", "department", "reportsTo"})
+    @Override
+    Page<User> findAll(Pageable pageable);
+
+    @EntityGraph(attributePaths = {"role", "department", "reportsTo"})
+    @Override
+    Optional<User> findById(Long id);
 
     @EntityGraph(attributePaths = {"role", "department", "reportsTo"})
     Optional<User> findByEmailIgnoreCase(String email);

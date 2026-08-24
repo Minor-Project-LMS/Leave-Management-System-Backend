@@ -48,11 +48,11 @@ public class HolidaysController {
         if (year != null && month != null) {
             LocalDate startOfMonth = LocalDate.of(year, month, 1);
             LocalDate endOfMonth = startOfMonth.withDayOfMonth(startOfMonth.lengthOfMonth());
-            holidays = holidayRepository.findByDateBetween(startOfMonth, endOfMonth, pageable);
+            holidays = holidayRepository.findByHolidayDateBetween(startOfMonth, endOfMonth, pageable);
         } else if (year != null) {
             LocalDate startOfYear = LocalDate.of(year, 1, 1);
             LocalDate endOfYear = LocalDate.of(year, 12, 31);
-            holidays = holidayRepository.findByDateBetween(startOfYear, endOfYear, pageable);
+            holidays = holidayRepository.findByHolidayDateBetween(startOfYear, endOfYear, pageable);
         } else {
             holidays = holidayRepository.findAll(pageable);
         }
@@ -83,11 +83,11 @@ public class HolidaysController {
         if (month != null && year != null) {
             LocalDate startOfMonth = LocalDate.of(year, month, 1);
             LocalDate endOfMonth = startOfMonth.withDayOfMonth(startOfMonth.lengthOfMonth());
-            return ResponseEntity.ok(holidayRepository.findByDateBetween(startOfMonth, endOfMonth).stream()
+            return ResponseEntity.ok(holidayRepository.findByHolidayDateBetween(startOfMonth, endOfMonth).stream()
                     .map(this::toHolidayDto)
                     .collect(Collectors.toList()));
         } else {
-            return ResponseEntity.ok(holidayRepository.findByDateBetween(today, endDate).stream()
+            return ResponseEntity.ok(holidayRepository.findByHolidayDateBetween(today, endDate).stream()
                     .map(this::toHolidayDto)
                     .collect(Collectors.toList()));
         }
@@ -107,8 +107,8 @@ public class HolidaysController {
             @RequestBody HolidayDto request) {
         
         Holiday holiday = new Holiday();
-        holiday.setName(request.getName());
-        holiday.setDate(request.getDate());
+        holiday.setHolidayName(request.getName());
+        holiday.setHolidayDate(request.getDate());
         holiday.setRestricted(request.isRestricted());
         
         if (request.getDepartmentId() != null) {
@@ -133,10 +133,10 @@ public class HolidaysController {
                 .orElseThrow(() -> new ResourceNotFoundException("Holiday", holidayId));
 
         if (request.getName() != null) {
-            holiday.setName(request.getName());
+            holiday.setHolidayName(request.getName());
         }
         if (request.getDate() != null) {
-            holiday.setDate(request.getDate());
+            holiday.setHolidayDate(request.getDate());
         }
         if (request.isRestricted() != holiday.isRestricted()) {
             holiday.setRestricted(request.isRestricted());
@@ -183,13 +183,13 @@ public class HolidaysController {
     private HolidayDto toHolidayDto(Holiday holiday) {
         HolidayDto dto = new HolidayDto();
         dto.setId(holiday.getId());
-        dto.setName(holiday.getName());
-        dto.setDate(holiday.getDate());
+        dto.setName(holiday.getHolidayName());
+        dto.setDate(holiday.getHolidayDate());
         dto.setRestricted(holiday.isRestricted());
         if (holiday.getDepartment() != null) {
             dto.setDepartmentId(holiday.getDepartment().getId());
-            // Safe getName() call with null check
-            String deptName = holiday.getDepartment().getName();
+            // Safe getDepartmentName() call with null check
+            String deptName = holiday.getDepartment().getDepartmentName();
             dto.setDepartmentName(deptName != null ? deptName : "Unknown");
         }
         return dto;

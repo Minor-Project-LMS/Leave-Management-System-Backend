@@ -25,7 +25,7 @@ public class User {
     private String employeeCode;
 
     @Column(name = "full_name", nullable = false)
-    private String name;
+    private String fullName;
 
     @Column(name = "email", nullable = false, unique = true)
     private String email;
@@ -38,7 +38,7 @@ public class User {
     private Role role;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "department_id")
+    @JoinColumn(name = "department_id", nullable = false)
     private Department department;
 
     @ManyToOne(fetch = FetchType.LAZY)
@@ -108,12 +108,21 @@ public class User {
         this.employeeCode = employeeCode;
     }
 
+    public String getFullName() {
+        return fullName;
+    }
+
+    public void setFullName(String fullName) {
+        this.fullName = fullName;
+    }
+
+    // For backward compatibility
     public String getName() {
-        return name;
+        return fullName;
     }
 
     public void setName(String name) {
-        this.name = name;
+        this.fullName = name;
     }
 
     public String getEmail() {

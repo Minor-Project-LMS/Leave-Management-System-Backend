@@ -188,7 +188,7 @@ public class LeavePoliciesController {
     private LeavePolicyDto toLeavePolicyDto(LeavePolicy policy) {
         LeavePolicyDto dto = new LeavePolicyDto();
         dto.setPolicyId(policy.getId());
-        
+
         LeaveCategoryDto categoryDto = new LeaveCategoryDto();
         categoryDto.setId(policy.getCategory().getId());
         categoryDto.setName(policy.getCategory().getName());
@@ -197,11 +197,11 @@ public class LeavePoliciesController {
         categoryDto.setDefaultAnnualQuota(policy.getCategory().getDefaultAnnualQuota());
         categoryDto.setActive(true); // Default to true
         dto.setCategory(categoryDto);
-        
+
         if (policy.getDepartment() != null) {
             DepartmentDto departmentDto = new DepartmentDto(
-                policy.getDepartment().getId(), 
-                policy.getDepartment().getName()
+                policy.getDepartment().getId(),
+                policy.getDepartment().getDepartmentName()
             );
             if (policy.getDepartment().getDepartmentHead() != null) {
                 departmentDto.setDepartmentHeadId(policy.getDepartment().getDepartmentHead().getId().longValue());
@@ -211,14 +211,14 @@ public class LeavePoliciesController {
             }
             dto.setDepartment(departmentDto);
         }
-        
+
         dto.setAnnualQuota(policy.getAnnualQuota() != null ? policy.getAnnualQuota().doubleValue() : 0.0);
         dto.setMaxCarryForward(policy.getMaxCarryForward() != null ? policy.getMaxCarryForward().doubleValue() : 0.0);
         dto.setMinNoticeDays(policy.getMinNoticeDays() != null ? policy.getMinNoticeDays() : 0);
         dto.setMaxConsecutiveDays(policy.getMaxConsecutiveDays() != null ? policy.getMaxConsecutiveDays() : 0);
         dto.setEffectiveFrom(policy.getEffectiveFrom());
         dto.setStatus("ACTIVE"); // Default to ACTIVE
-        
+
         return dto;
     }
 }

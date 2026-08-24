@@ -15,7 +15,15 @@ import java.util.Optional;
 
 @Repository
 public interface ApprovalDelegationRepository extends JpaRepository<ApprovalDelegation, Integer> {
-    
+
+    @EntityGraph(attributePaths = {"delegator", "delegate"})
+    @Override
+    Page<ApprovalDelegation> findAll(Pageable pageable);
+
+    @EntityGraph(attributePaths = {"delegator", "delegate"})
+    @Override
+    Optional<ApprovalDelegation> findById(Integer id);
+
     @EntityGraph(attributePaths = {"delegator", "delegate"})
     Page<ApprovalDelegation> findByDelegatorId(Long delegatorId, Pageable pageable);
     
@@ -24,21 +32,21 @@ public interface ApprovalDelegationRepository extends JpaRepository<ApprovalDele
     
     @EntityGraph(attributePaths = {"delegator", "delegate"})
     @Query("SELECT d FROM ApprovalDelegation d WHERE d.delegator.id = :delegatorId " +
-           "AND d.startDate <= :date AND d.endDate >= :date AND d.active = true")
+           "AND d.startDate <= :date AND d.endDate >= :date AND d.isActive = true")
     List<ApprovalDelegation> findActiveDelegationsForDelegatorOnDate(
             @Param("delegatorId") Long delegatorId, 
             @Param("date") LocalDate date);
     
     @EntityGraph(attributePaths = {"delegator", "delegate"})
     @Query("SELECT d FROM ApprovalDelegation d WHERE d.delegate.id = :delegateId " +
-           "AND d.startDate <= :date AND d.endDate >= :date AND d.active = true")
+           "AND d.startDate <= :date AND d.endDate >= :date AND d.isActive = true")
     List<ApprovalDelegation> findActiveDelegationsForDelegateOnDate(
             @Param("delegateId") Long delegateId, 
             @Param("date") LocalDate date);
     
     @EntityGraph(attributePaths = {"delegator", "delegate"})
     @Query("SELECT d FROM ApprovalDelegation d WHERE d.delegator.id = :delegatorId " +
-           "AND d.startDate <= :endDate AND d.endDate >= :startDate AND d.active = true")
+           "AND d.startDate <= :endDate AND d.endDate >= :startDate AND d.isActive = true")
     Optional<ApprovalDelegation> findOverlappingDelegations(
             @Param("delegatorId") Long delegatorId,
             @Param("startDate") LocalDate startDate,

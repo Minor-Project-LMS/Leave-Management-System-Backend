@@ -57,7 +57,7 @@ public class DepartmentsController {
             @RequestBody DepartmentDto request) {
         
         Department department = new Department();
-        department.setName(request.getDepartmentName());
+        department.setDepartmentName(request.getDepartmentName());
         
         if (request.getDepartmentHeadId() != null) {
             User departmentHead = userRepository.findById(request.getDepartmentHeadId().longValue())
@@ -87,7 +87,7 @@ public class DepartmentsController {
                 .orElseThrow(() -> new ResourceNotFoundException("Department", departmentId));
 
         if (request.getDepartmentName() != null) {
-            department.setName(request.getDepartmentName());
+            department.setDepartmentName(request.getDepartmentName());
         }
         
         if (request.getDepartmentHeadId() != null) {
@@ -119,15 +119,15 @@ public class DepartmentsController {
     private DepartmentDto toDepartmentDto(Department department) {
         DepartmentDto dto = new DepartmentDto();
         dto.setId(department.getId());
-        dto.setDepartmentName(department.getName());
-        
+        dto.setDepartmentName(department.getDepartmentName());
+
         if (department.getDepartmentHead() != null) {
             dto.setDepartmentHeadId(department.getDepartmentHead().getId().longValue());
             dto.setDepartmentHeadName(department.getDepartmentHead().getName());
         }
-        
+
         dto.setMemberCount(userRepository.findByDepartmentId(department.getId()).size());
-        
+
         return dto;
     }
 }

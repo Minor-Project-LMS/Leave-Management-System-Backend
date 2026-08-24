@@ -14,19 +14,27 @@ import java.util.Optional;
 
 @Repository
 public interface LeavePolicyRepository extends JpaRepository<LeavePolicy, Integer> {
-    
+
+    @EntityGraph(attributePaths = {"category", "department"})
+    @Override
+    Page<LeavePolicy> findAll(Pageable pageable);
+
+    @EntityGraph(attributePaths = {"category", "department"})
+    @Override
+    Optional<LeavePolicy> findById(Integer id);
+
     @EntityGraph(attributePaths = {"category", "department"})
     List<LeavePolicy> findByCategoryId(Integer categoryId);
-    
+
     @EntityGraph(attributePaths = {"category", "department"})
     List<LeavePolicy> findByDepartmentId(Integer departmentId);
-    
+
     @EntityGraph(attributePaths = {"category", "department"})
     Optional<LeavePolicy> findByCategoryIdAndDepartmentId(Integer categoryId, Integer departmentId);
-    
+
     @EntityGraph(attributePaths = {"category", "department"})
     List<LeavePolicy> findByCategoryIdAndDepartmentIdIsNull(Integer categoryId);
-    
+
     // Enhanced methods for API support (without status since model doesn't have it)
     @EntityGraph(attributePaths = {"category", "department"})
     @Query("SELECT p FROM LeavePolicy p WHERE " +

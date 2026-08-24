@@ -27,7 +27,7 @@ public class LeaveApproval {
     private User approver;
 
     @Column(name = "level", nullable = false)
-    private Integer level;
+    private Short level;
 
     @Column(name = "decision", nullable = false)
     @Enumerated(EnumType.STRING)
@@ -70,11 +70,11 @@ public class LeaveApproval {
         this.approver = approver;
     }
 
-    public Integer getLevel() {
+    public Short getLevel() {
         return level;
     }
 
-    public void setLevel(Integer level) {
+    public void setLevel(Short level) {
         this.level = level;
     }
 

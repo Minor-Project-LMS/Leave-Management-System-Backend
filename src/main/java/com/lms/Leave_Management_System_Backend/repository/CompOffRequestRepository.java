@@ -13,7 +13,11 @@ import java.util.List;
 
 @Repository
 public interface CompOffRequestRepository extends JpaRepository<CompOffRequest, Long> {
-    
+
+    @EntityGraph(attributePaths = {"user", "approver"})
+    @Override
+    Page<CompOffRequest> findAll(Pageable pageable);
+
     @EntityGraph(attributePaths = {"user", "approver"})
     List<CompOffRequest> findByUserId(Long userId);
     
