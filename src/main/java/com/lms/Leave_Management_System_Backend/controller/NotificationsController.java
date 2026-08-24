@@ -2,9 +2,13 @@ package com.lms.Leave_Management_System_Backend.controller;
 
 import com.lms.Leave_Management_System_Backend.dto.NotificationDto;
 import com.lms.Leave_Management_System_Backend.dto.NotificationPreferences;
-import com.lms.Leave_Management_System_Backend.dto.PaginatedResponse;
 import com.lms.Leave_Management_System_Backend.dto.PageResponse;
+import com.lms.Leave_Management_System_Backend.model.NotificationQueue;
+import com.lms.Leave_Management_System_Backend.model.User;
+import com.lms.Leave_Management_System_Backend.repository.NotificationQueueRepository;
+import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -17,10 +21,17 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/notifications")
 public class NotificationsController {
+
+    @Autowired
+    private NotificationQueueRepository notificationQueueRepository;
+
+    @Autowired
+    private UserRepository userRepository;
 
     @GetMapping
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
@@ -30,23 +41,44 @@ public class NotificationsController {
             @RequestParam(defaultValue = "20") int size,
             Authentication authentication) {
 
-        // Simplified implementation - would query actual notifications
+        User currentUser = userRepository.findById(Long.parseLong(authentication.getName()))
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
         Pageable pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
         
-        // Mock data for demonstration
-        List<NotificationDto> notifications = List.of(
-                createNotification(1, "REQUESTS", "Leave Request Submitted", 
-                        "Your leave request has been submitted successfully", false, 
-                        "LEAVE_REQUEST", 101, LocalDateTime.now()),
-                createNotification(2, "APPROVALS", "Leave Request Approved", 
-                        "Your leave request has been approved", true, 
-                        "LEAVE_REQUEST", 101, LocalDateTime.now().minusDays(1)),
-                createNotification(3, "SYSTEM", "System Maintenance", 
-                        "System maintenance scheduled for this weekend", false, 
-                        null, null, LocalDateTime.now().minusDays(2))
-        );
+        Page<NotificationQueue> notificationsPage;
+        
+        // Filter based on tab parameter
+        if ("unread".equals(tab)) {
+            notificationsPage = notificationQueueRepository.findByUserIdAndChannelAndStatus(
+                currentUser.getId(), 
+                NotificationQueue.Channel.IN_APP, 
+                NotificationQueue.NotificationStatus.SENT, 
+                pageable
+            );
+        } else {
+            notificationsPage = notificationQueueRepository.findByUserIdAndChannel(
+                currentUser.getId(), 
+                NotificationQueue.Channel.IN_APP, 
+                pageable
+            );
+        }
+        
+        List<NotificationDto> notifications = notificationsPage.getContent().stream()
+                .map(this::convertToDto)
+                .collect(Collectors.toList());
 
-        PageResponse pageResponse = new PageResponse(page, size, notifications.size(), 1);
+        // Count unread notifications (sent IN_APP notifications that haven't been read)
+        List<NotificationQueue> unreadNotifications = notificationQueueRepository.findByUserIdAndStatus(
+            currentUser.getId(), 
+            NotificationQueue.NotificationStatus.SENT
+        );
+        long unreadCount = unreadNotifications.stream()
+                .filter(n -> n.getIsRead() == null || !n.getIsRead())
+                .filter(n -> n.getChannel() == NotificationQueue.Channel.IN_APP)
+                .count();
+
+        PageResponse pageResponse = new PageResponse(page, size, (int) notificationsPage.getTotalElements(), notificationsPage.getTotalPages());
         
         PaginatedResponseWithUnreadCount response = new PaginatedResponseWithUnreadCount();
         response.setSuccess(true);
@@ -55,7 +87,7 @@ public class NotificationsController {
         response.setLimit(pageResponse.getSize());
         response.setTotalCount((int) pageResponse.getTotalElements());
         response.setTotalPages(pageResponse.getTotalPages());
-        response.setUnreadCount(2); // Count of unread notifications
+        response.setUnreadCount((int) unreadCount);
 
         return ResponseEntity.ok(response);
     }
@@ -63,24 +95,46 @@ public class NotificationsController {
     @PostMapping("/{notificationId}/read")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
     public ResponseEntity<NotificationDto> markAsRead(
-            @PathVariable Integer notificationId,
+            @PathVariable Long notificationId,
             Authentication authentication) {
 
-        // Simplified implementation - would update actual notification
-        NotificationDto notification = createNotification(notificationId, "REQUESTS", 
-                "Leave Request Submitted", "Your leave request has been submitted successfully", 
-                true, "LEAVE_REQUEST", 101, LocalDateTime.now());
+        User currentUser = userRepository.findById(Long.parseLong(authentication.getName()))
+                .orElseThrow(() -> new RuntimeException("User not found"));
 
-        return ResponseEntity.ok(notification);
+        NotificationQueue notification = notificationQueueRepository.findById(notificationId)
+                .orElseThrow(() -> new RuntimeException("Notification not found"));
+        
+        // Ensure the notification belongs to the current user
+        if (!notification.getUser().getId().equals(currentUser.getId())) {
+            throw new RuntimeException("Unauthorized");
+        }
+        
+        notification.setIsRead(true);
+        notificationQueueRepository.save(notification);
+
+        return ResponseEntity.ok(convertToDto(notification));
     }
 
     @PostMapping("/mark-all-read")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
     public ResponseEntity<Map<String, Integer>> markAllAsRead(Authentication authentication) {
 
-        // Simplified implementation - would update all notifications
+        User currentUser = userRepository.findById(Long.parseLong(authentication.getName()))
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        List<NotificationQueue> allUserNotifications = notificationQueueRepository.findByUserId(currentUser.getId());
+        
+        int updatedCount = 0;
+        for (NotificationQueue notification : allUserNotifications) {
+            if (notification.getIsRead() == null || !notification.getIsRead()) {
+                notification.setIsRead(true);
+                notificationQueueRepository.save(notification);
+                updatedCount++;
+            }
+        }
+
         Map<String, Integer> result = new HashMap<>();
-        result.put("updated", 5); // Number of notifications marked as read
+        result.put("updated", updatedCount);
 
         return ResponseEntity.ok(result);
     }
@@ -89,7 +143,11 @@ public class NotificationsController {
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
     public ResponseEntity<NotificationPreferences> getNotificationPreferences(Authentication authentication) {
 
-        // Simplified implementation - would query actual user preferences
+        User currentUser = userRepository.findById(Long.parseLong(authentication.getName()))
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        // For now, return default preferences since we don't have a dedicated preferences table
+        // In a real implementation, this would query a user_preferences table
         NotificationPreferences preferences = new NotificationPreferences();
         preferences.setLeaveRequestUpdates(true);
         preferences.setApprovalNotifications(true);
@@ -107,25 +165,26 @@ public class NotificationsController {
             @RequestBody NotificationPreferences preferences,
             Authentication authentication) {
 
-        // Simplified implementation - would update actual user preferences
+        User currentUser = userRepository.findById(Long.parseLong(authentication.getName()))
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        // For now, just return the preferences since we don't have a dedicated preferences table
+        // In a real implementation, this would update a user_preferences table
         return ResponseEntity.ok(preferences);
     }
 
-    // Helper method
-    private NotificationDto createNotification(Integer id, String category, String title, 
-                                               String description, boolean isRead, 
-                                               String relatedEntityType, Integer relatedEntityId, 
-                                               LocalDateTime createdAt) {
-        NotificationDto notification = new NotificationDto();
-        notification.setId(id);
-        notification.setCategory(category);
-        notification.setTitle(title);
-        notification.setDescription(description);
-        notification.setIsRead(isRead);
-        notification.setRelatedEntityType(relatedEntityType);
-        notification.setRelatedEntityId(relatedEntityId);
-        notification.setCreatedAt(createdAt);
-        return notification;
+    // Helper method to convert NotificationQueue to NotificationDto
+    private NotificationDto convertToDto(NotificationQueue notification) {
+        NotificationDto dto = new NotificationDto();
+        dto.setId(notification.getId().intValue());
+        dto.setCategory("REQUESTS"); // Could be derived from template code
+        dto.setTitle(notification.getTemplateCode()); // Using template code as title for now
+        dto.setDescription(notification.getPayload()); // Using payload as description for now
+        dto.setIsRead(notification.getIsRead() != null ? notification.getIsRead() : false);
+        dto.setRelatedEntityType(notification.getRelatedEntityType());
+        dto.setRelatedEntityId(notification.getRelatedEntityId() != null ? notification.getRelatedEntityId().intValue() : null);
+        dto.setCreatedAt(notification.getCreatedAt());
+        return dto;
     }
 
     // Custom response class for notifications with unread count

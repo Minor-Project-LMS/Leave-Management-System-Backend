@@ -3,7 +3,11 @@ package com.lms.Leave_Management_System_Backend.controller;
 import com.lms.Leave_Management_System_Backend.dto.NotificationQueueItem;
 import com.lms.Leave_Management_System_Backend.dto.PaginatedResponse;
 import com.lms.Leave_Management_System_Backend.dto.PageResponse;
+import com.lms.Leave_Management_System_Backend.model.NotificationQueue;
+import com.lms.Leave_Management_System_Backend.repository.NotificationQueueRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -15,10 +19,14 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/notification-queue")
 public class NotificationQueueController {
+
+    @Autowired
+    private NotificationQueueRepository notificationQueueRepository;
 
     @GetMapping
     @RequireRole({"HR_ADMIN"})
@@ -32,23 +40,42 @@ public class NotificationQueueController {
             @RequestParam(defaultValue = "20") int size,
             Authentication authentication) {
 
-        // Simplified implementation - would query actual notification queue
         Pageable pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
         
-        // Mock data for demonstration
-        List<NotificationQueueItem> queueItems = List.of(
-                createNotificationQueueItem(1, 1, "John Doe", "LEAVE_APPROVED", 
-                        "Your leave request has been approved", "EMAIL", "SENT", 
-                        "LEAVE_REQUEST", 101, 0, LocalDateTime.now(), LocalDateTime.now(), LocalDateTime.now()),
-                createNotificationQueueItem(2, 2, "Jane Smith", "LEAVE_SUBMITTED", 
-                        "New leave request submitted", "IN_APP", "QUEUED", 
-                        "LEAVE_REQUEST", 102, 0, LocalDateTime.now(), LocalDateTime.now(), LocalDateTime.now()),
-                createNotificationQueueItem(3, 3, "Mike Johnson", "LEAVE_REJECTED", 
-                        "Your leave request has been rejected", "EMAIL", "FAILED", 
-                        "LEAVE_REQUEST", 103, 2, LocalDateTime.now().minusHours(2), null, null)
-        );
+        Page<NotificationQueue> notificationQueuePage;
+        
+        // Build query based on filters using specification
+        if (status != null || channel != null || templateCode != null || dateFrom != null || dateTo != null) {
+            notificationQueuePage = notificationQueueRepository.findAll((root, query, cb) -> {
+                var predicates = new java.util.ArrayList<jakarta.persistence.criteria.Predicate>();
+                
+                if (status != null) {
+                    predicates.add(cb.equal(root.get("status"), NotificationQueue.NotificationStatus.valueOf(status)));
+                }
+                if (channel != null) {
+                    predicates.add(cb.equal(root.get("channel"), NotificationQueue.Channel.valueOf(channel)));
+                }
+                if (templateCode != null) {
+                    predicates.add(cb.equal(root.get("templateCode"), templateCode));
+                }
+                if (dateFrom != null) {
+                    predicates.add(cb.greaterThanOrEqualTo(root.get("createdAt"), LocalDateTime.parse(dateFrom)));
+                }
+                if (dateTo != null) {
+                    predicates.add(cb.lessThanOrEqualTo(root.get("createdAt"), LocalDateTime.parse(dateTo)));
+                }
+                
+                return cb.and(predicates.toArray(new jakarta.persistence.criteria.Predicate[0]));
+            }, pageable);
+        } else {
+            notificationQueuePage = notificationQueueRepository.findAll(pageable);
+        }
+        
+        List<NotificationQueueItem> queueItems = notificationQueuePage.getContent().stream()
+                .map(this::convertToDto)
+                .collect(Collectors.toList());
 
-        PageResponse pageResponse = new PageResponse(page, size, queueItems.size(), 1);
+        PageResponse pageResponse = new PageResponse(page, size, (int) notificationQueuePage.getTotalElements(), notificationQueuePage.getTotalPages());
         
         return ResponseEntity.ok(new PaginatedResponse<>(true, queueItems, pageResponse));
     }
@@ -56,24 +83,36 @@ public class NotificationQueueController {
     @PostMapping("/{notificationId}/retry")
     @RequireRole({"HR_ADMIN"})
     public ResponseEntity<NotificationQueueItem> retryNotification(
-            @PathVariable Integer notificationId,
+            @PathVariable Long notificationId,
             Authentication authentication) {
 
-        // Simplified implementation - would retry actual notification
-        NotificationQueueItem item = createNotificationQueueItem(notificationId.intValue(), 1, "John Doe", 
-                "LEAVE_APPROVED", "Your leave request has been approved", "EMAIL", "QUEUED", 
-                "LEAVE_REQUEST", 101, 1, null, LocalDateTime.now(), null);
+        NotificationQueue notification = notificationQueueRepository.findById(notificationId)
+                .orElseThrow(() -> new RuntimeException("Notification not found"));
+        
+        notification.setStatus(NotificationQueue.NotificationStatus.QUEUED);
+        notification.setSentAt(null);
+        notificationQueueRepository.save(notification);
 
-        return ResponseEntity.ok(item);
+        return ResponseEntity.ok(convertToDto(notification));
     }
 
     @PostMapping("/retry-failed")
     @RequireRole({"HR_ADMIN"})
     public ResponseEntity<Map<String, Integer>> retryFailedNotifications(Authentication authentication) {
 
-        // Simplified implementation - would retry all failed notifications
+        List<NotificationQueue> failedNotifications = notificationQueueRepository.findByStatus(NotificationQueue.NotificationStatus.FAILED);
+        
+        int requeuedCount = 0;
+        for (NotificationQueue notification : failedNotifications) {
+            notification.setStatus(NotificationQueue.NotificationStatus.QUEUED);
+            notification.setSentAt(null);
+            notification.setRetryCount(notification.getRetryCount() + 1);
+            notificationQueueRepository.save(notification);
+            requeuedCount++;
+        }
+
         Map<String, Integer> result = new HashMap<>();
-        result.put("requeued", 3); // Number of notifications requeued
+        result.put("requeued", requeuedCount);
 
         return ResponseEntity.ok(result);
     }
@@ -81,15 +120,16 @@ public class NotificationQueueController {
     @PostMapping("/{notificationId}/cancel")
     @RequireRole({"HR_ADMIN"})
     public ResponseEntity<NotificationQueueItem> cancelNotification(
-            @PathVariable Integer notificationId,
+            @PathVariable Long notificationId,
             Authentication authentication) {
 
-        // Simplified implementation - would cancel actual notification
-        NotificationQueueItem item = createNotificationQueueItem(notificationId.intValue(), 1, "John Doe", 
-                "LEAVE_APPROVED", "Your leave request has been approved", "EMAIL", "CANCELLED", 
-                "LEAVE_REQUEST", 101, 0, null, LocalDateTime.now(), null);
+        NotificationQueue notification = notificationQueueRepository.findById(notificationId)
+                .orElseThrow(() -> new RuntimeException("Notification not found"));
+        
+        notification.setStatus(NotificationQueue.NotificationStatus.CANCELLED);
+        notificationQueueRepository.save(notification);
 
-        return ResponseEntity.ok(item);
+        return ResponseEntity.ok(convertToDto(notification));
     }
 
     @GetMapping("/export")
@@ -104,26 +144,22 @@ public class NotificationQueueController {
         return ResponseEntity.ok().build();
     }
 
-    // Helper method
-    private NotificationQueueItem createNotificationQueueItem(int id, int recipientId, String recipientName,
-                                                            String templateCode, String subject, String channel,
-                                                            String status, String relatedEntityType, int relatedEntityId,
-                                                            int retryCount, LocalDateTime createdAt, LocalDateTime sentAt,
-                                                            LocalDateTime scheduledAt) {
+    // Helper method to convert entity to DTO
+    private NotificationQueueItem convertToDto(NotificationQueue notification) {
         NotificationQueueItem item = new NotificationQueueItem();
-        item.setId(id);
-        item.setRecipientId(recipientId);
-        item.setRecipientName(recipientName);
-        item.setTemplateCode(templateCode);
-        item.setSubject(subject);
-        item.setChannel(channel);
-        item.setStatus(status);
-        item.setRelatedEntityType(relatedEntityType);
-        item.setRelatedEntityId(relatedEntityId);
-        item.setRetryCount(retryCount);
-        item.setScheduledAt(scheduledAt);
-        item.setCreatedAt(createdAt);
-        item.setSentAt(sentAt);
+        item.setId(notification.getId().intValue());
+        item.setRecipientId(notification.getUser().getId().intValue());
+        item.setRecipientName(notification.getUser().getName());
+        item.setTemplateCode(notification.getTemplateCode());
+        item.setSubject(notification.getTemplateCode()); // Using template code as subject for now
+        item.setChannel(notification.getChannel().name());
+        item.setStatus(notification.getStatus().name());
+        item.setRelatedEntityType(notification.getRelatedEntityType());
+        item.setRelatedEntityId(notification.getRelatedEntityId() != null ? notification.getRelatedEntityId().intValue() : null);
+        item.setRetryCount(notification.getRetryCount() != null ? notification.getRetryCount() : 0);
+        item.setScheduledAt(notification.getScheduledAt());
+        item.setCreatedAt(notification.getCreatedAt());
+        item.setSentAt(notification.getSentAt());
         return item;
     }
 }

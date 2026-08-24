@@ -4,7 +4,10 @@ import com.lms.Leave_Management_System_Backend.dto.AuditLogEntry;
 import com.lms.Leave_Management_System_Backend.dto.AuditLogEntryDetail;
 import com.lms.Leave_Management_System_Backend.dto.PaginatedResponse;
 import com.lms.Leave_Management_System_Backend.dto.PageResponse;
+import com.lms.Leave_Management_System_Backend.model.AuditTrail;
+import com.lms.Leave_Management_System_Backend.repository.AuditTrailRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -16,10 +19,14 @@ import org.springframework.web.bind.annotation.*;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/audit-log")
 public class AuditTrailController {
+
+    @Autowired
+    private AuditTrailRepository auditTrailRepository;
 
     @GetMapping
     @RequireRole({"HR_ADMIN"})
@@ -34,20 +41,48 @@ public class AuditTrailController {
             @RequestParam(defaultValue = "20") int size,
             Authentication authentication) {
 
-        // Simplified implementation - would query actual audit log
         Pageable pageable = PageRequest.of(page, size, Sort.by("performedAt").descending());
         
-        // Mock data for demonstration
-        List<AuditLogEntry> entries = List.of(
-                createAuditLogEntry(1, "LEAVE_REQUEST", 101, "CREATE", 1, "John Doe", 
-                        "Leave request created", "Leave Requests", "SUCCESS", "192.168.1.1", LocalDateTime.now()),
-                createAuditLogEntry(2, "LEAVE_REQUEST", 102, "APPROVE", 2, "Jane Smith", 
-                        "Leave request approved", "Leave Requests", "SUCCESS", "192.168.1.2", LocalDateTime.now()),
-                createAuditLogEntry(3, "USER", 5, "UPDATE", 1, "John Doe", 
-                        "User profile updated", "User Management", "SUCCESS", "192.168.1.1", LocalDateTime.now())
-        );
+        Page<AuditTrail> auditTrailPage;
+        
+        // Build query based on filters using specification
+        if (dateFrom != null || dateTo != null || userId != null || action != null || entityType != null || q != null) {
+            auditTrailPage = auditTrailRepository.findAll((root, query, cb) -> {
+                var predicates = new java.util.ArrayList<jakarta.persistence.criteria.Predicate>();
+                
+                if (dateFrom != null) {
+                    predicates.add(cb.greaterThanOrEqualTo(root.get("performedAt"), LocalDateTime.parse(dateFrom)));
+                }
+                if (dateTo != null) {
+                    predicates.add(cb.lessThanOrEqualTo(root.get("performedAt"), LocalDateTime.parse(dateTo)));
+                }
+                if (userId != null) {
+                    predicates.add(cb.equal(root.get("performedBy").get("id"), userId.longValue()));
+                }
+                if (action != null) {
+                    predicates.add(cb.equal(root.get("action"), AuditTrail.AuditAction.valueOf(action)));
+                }
+                if (entityType != null) {
+                    predicates.add(cb.equal(root.get("entityType"), entityType));
+                }
+                if (q != null) {
+                    predicates.add(cb.or(
+                        cb.like(root.get("entityType"), "%" + q + "%"),
+                        cb.like(root.get("action").as(String.class), "%" + q + "%")
+                    ));
+                }
+                
+                return cb.and(predicates.toArray(new jakarta.persistence.criteria.Predicate[0]));
+            }, pageable);
+        } else {
+            auditTrailPage = auditTrailRepository.findAll(pageable);
+        }
+        
+        List<AuditLogEntry> entries = auditTrailPage.getContent().stream()
+                .map(this::convertToDto)
+                .collect(Collectors.toList());
 
-        PageResponse pageResponse = new PageResponse(page, size, entries.size(), 1);
+        PageResponse pageResponse = new PageResponse(page, size, (int) auditTrailPage.getTotalElements(), auditTrailPage.getTotalPages());
         
         return ResponseEntity.ok(new PaginatedResponse<>(true, entries, pageResponse));
     }
@@ -58,40 +93,52 @@ public class AuditTrailController {
             @RequestParam(defaultValue = "10") int limit,
             Authentication authentication) {
 
-        // Simplified implementation - would query actual recent activity
-        List<AuditLogEntry> recentEntries = List.of(
-                createAuditLogEntry(1, "LEAVE_REQUEST", 101, "CREATE", 1, "John Doe", 
-                        "Leave request created", "Leave Requests", "SUCCESS", "192.168.1.1", LocalDateTime.now()),
-                createAuditLogEntry(2, "LEAVE_REQUEST", 102, "APPROVE", 2, "Jane Smith", 
-                        "Leave request approved", "Leave Requests", "SUCCESS", "192.168.1.2", LocalDateTime.now())
-        );
+        Pageable pageable = PageRequest.of(0, limit, Sort.by("performedAt").descending());
+        
+        Page<AuditTrail> recentEntries = auditTrailRepository.findAll(pageable);
+        
+        List<AuditLogEntry> entries = recentEntries.getContent().stream()
+                .map(this::convertToDto)
+                .collect(Collectors.toList());
 
-        return ResponseEntity.ok(recentEntries);
+        return ResponseEntity.ok(entries);
     }
 
     @GetMapping("/{auditId}")
     @RequireRole({"HR_ADMIN"})
     public ResponseEntity<AuditLogEntryDetail> getAuditLogEntry(
-            @PathVariable Integer auditId,
+            @PathVariable Long auditId,
             Authentication authentication) {
 
-        // Simplified implementation - would query actual audit log entry with details
+        AuditTrail auditTrail = auditTrailRepository.findById(auditId)
+                .orElseThrow(() -> new RuntimeException("Audit log entry not found"));
+
         AuditLogEntryDetail entryDetail = new AuditLogEntryDetail();
-        entryDetail.setId(auditId);
-        entryDetail.setEntityType("LEAVE_REQUEST");
-        entryDetail.setEntityId(101);
-        entryDetail.setAction("CREATE");
-        entryDetail.setPerformedBy(1);
-        entryDetail.setPerformedByName("John Doe");
-        entryDetail.setDescription("Leave request created");
-        entryDetail.setModule("Leave Requests");
-        entryDetail.setStatus("SUCCESS");
-        entryDetail.setIpAddress("192.168.1.1");
-        entryDetail.setPerformedAt(LocalDateTime.now());
+        entryDetail.setId(auditId.intValue());
+        entryDetail.setEntityType(auditTrail.getEntityType());
+        entryDetail.setEntityId(auditTrail.getEntityId() != null ? auditTrail.getEntityId().intValue() : null);
+        entryDetail.setAction(auditTrail.getAction().name());
+        entryDetail.setPerformedBy(auditTrail.getPerformedBy().getId().intValue());
+        entryDetail.setPerformedByName(auditTrail.getPerformedBy().getName());
+        entryDetail.setDescription(auditTrail.getAction().name() + " operation on " + auditTrail.getEntityType());
+        entryDetail.setModule("System"); // Could be derived from entity type
+        entryDetail.setStatus("SUCCESS"); // Could be derived from action or added to entity
+        entryDetail.setIpAddress(auditTrail.getIpAddress());
+        entryDetail.setPerformedAt(auditTrail.getPerformedAt());
         
-        // Mock before/after states
-        entryDetail.setBeforeState(Map.of("status", "DRAFT"));
-        entryDetail.setAfterState(Map.of("status", "PENDING_L1"));
+        // Parse JSON states
+        try {
+            if (auditTrail.getBeforeState() != null) {
+                entryDetail.setBeforeState(Map.of("state", auditTrail.getBeforeState()));
+            }
+            if (auditTrail.getAfterState() != null) {
+                entryDetail.setAfterState(Map.of("state", auditTrail.getAfterState()));
+            }
+        } catch (Exception e) {
+            // Handle JSON parsing errors
+            entryDetail.setBeforeState(Map.of());
+            entryDetail.setAfterState(Map.of());
+        }
 
         return ResponseEntity.ok(entryDetail);
     }
@@ -109,23 +156,20 @@ public class AuditTrailController {
         return ResponseEntity.ok().build();
     }
 
-    // Helper method
-    private AuditLogEntry createAuditLogEntry(Integer id, String entityType, Integer entityId, 
-                                               String action, Integer performedBy, String performedByName,
-                                               String description, String module, String status, 
-                                               String ipAddress, LocalDateTime performedAt) {
+    // Helper method to convert AuditTrail to AuditLogEntry
+    private AuditLogEntry convertToDto(AuditTrail auditTrail) {
         AuditLogEntry entry = new AuditLogEntry();
-        entry.setId(id);
-        entry.setEntityType(entityType);
-        entry.setEntityId(entityId);
-        entry.setAction(action);
-        entry.setPerformedBy(performedBy);
-        entry.setPerformedByName(performedByName);
-        entry.setDescription(description);
-        entry.setModule(module);
-        entry.setStatus(status);
-        entry.setIpAddress(ipAddress);
-        entry.setPerformedAt(performedAt);
+        entry.setId(auditTrail.getId().intValue());
+        entry.setEntityType(auditTrail.getEntityType());
+        entry.setEntityId(auditTrail.getEntityId().intValue());
+        entry.setAction(auditTrail.getAction().name());
+        entry.setPerformedBy(auditTrail.getPerformedBy().getId().intValue());
+        entry.setPerformedByName(auditTrail.getPerformedBy().getName());
+        entry.setDescription(auditTrail.getAction().name() + " operation on " + auditTrail.getEntityType());
+        entry.setModule("System"); // Could be derived from entity type
+        entry.setStatus("SUCCESS"); // Could be derived from action or added to entity
+        entry.setIpAddress(auditTrail.getIpAddress());
+        entry.setPerformedAt(auditTrail.getPerformedAt());
         return entry;
     }
 }

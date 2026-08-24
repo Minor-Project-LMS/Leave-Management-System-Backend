@@ -42,12 +42,21 @@ public class NotificationQueue {
     @Column(name = "sent_at")
     private LocalDateTime sentAt;
 
+    @Column(name = "retry_count")
+    private Integer retryCount = 0;
+
+    @Column(name = "scheduled_at")
+    private LocalDateTime scheduledAt;
+
+    @Column(name = "is_read")
+    private Boolean isRead = false;
+
     public enum Channel {
         EMAIL, IN_APP
     }
 
     public enum NotificationStatus {
-        QUEUED, SENT, FAILED
+        QUEUED, SENT, FAILED, CANCELLED
     }
 
     public NotificationQueue() {
@@ -131,6 +140,30 @@ public class NotificationQueue {
 
     public void setSentAt(LocalDateTime sentAt) {
         this.sentAt = sentAt;
+    }
+
+    public Integer getRetryCount() {
+        return retryCount;
+    }
+
+    public void setRetryCount(Integer retryCount) {
+        this.retryCount = retryCount;
+    }
+
+    public LocalDateTime getScheduledAt() {
+        return scheduledAt;
+    }
+
+    public void setScheduledAt(LocalDateTime scheduledAt) {
+        this.scheduledAt = scheduledAt;
+    }
+
+    public Boolean getIsRead() {
+        return isRead;
+    }
+
+    public void setIsRead(Boolean isRead) {
+        this.isRead = isRead;
     }
 
     @PrePersist
