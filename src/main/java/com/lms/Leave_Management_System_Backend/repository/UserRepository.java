@@ -14,19 +14,24 @@ public interface UserRepository extends JpaRepository<User, Long> {
     @EntityGraph(attributePaths = {"role", "department", "reportsTo"})
     Optional<User> findByEmailIgnoreCase(String email);
 
+    @EntityGraph(attributePaths = {"role", "department", "reportsTo"})
     Optional<User> findByEmployeeCode(String employeeCode);
 
+    @EntityGraph(attributePaths = {"role", "department", "reportsTo"})
     List<User> findByDepartmentId(Integer departmentId);
 
+    @EntityGraph(attributePaths = {"role", "department", "reportsTo"})
     List<User> findByReportsToId(Long managerId);
 
     @Query("SELECT u FROM User u WHERE u.employmentStatus = 'ACTIVE'")
     @EntityGraph(attributePaths = {"role", "department", "reportsTo"})
     List<User> findActiveUsers();
 
+    @EntityGraph(attributePaths = {"role", "department", "reportsTo"})
     @Query("SELECT u FROM User u WHERE u.employmentStatus = 'ACTIVE' AND u.department.id = :departmentId")
     List<User> findActiveUsersByDepartment(@Param("departmentId") Integer departmentId);
     
+    @EntityGraph(attributePaths = {"role", "department", "reportsTo"})
     List<User> findByEmploymentStatus(User.EmploymentStatus employmentStatus);
     
     @EntityGraph(attributePaths = {"role", "department", "reportsTo"})

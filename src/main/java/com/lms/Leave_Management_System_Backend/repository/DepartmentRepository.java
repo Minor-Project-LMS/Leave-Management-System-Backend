@@ -1,6 +1,7 @@
 package com.lms.Leave_Management_System_Backend.repository;
 
 import com.lms.Leave_Management_System_Backend.model.Department;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -8,5 +9,6 @@ import java.util.Optional;
 
 @Repository
 public interface DepartmentRepository extends JpaRepository<Department, Integer> {
+    @EntityGraph(attributePaths = {"departmentHead"})
     Optional<Department> findByName(String name);
 }

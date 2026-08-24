@@ -12,13 +12,21 @@ import java.util.List;
 
 @Repository
 public interface HolidayRepository extends JpaRepository<Holiday, Integer> {
+    @EntityGraph(attributePaths = {"department"})
     List<Holiday> findByDateBetween(LocalDate startDate, LocalDate endDate);
+    
+    @EntityGraph(attributePaths = {"department"})
     Page<Holiday> findByDateBetween(LocalDate startDate, LocalDate endDate, Pageable pageable);
+    
+    @EntityGraph(attributePaths = {"department"})
     List<Holiday> findByDateAfter(LocalDate date);
     
     @EntityGraph(attributePaths = {"department"})
     List<Holiday> findByDepartmentId(Integer departmentId);
     
+    @EntityGraph(attributePaths = {"department"})
     List<Holiday> findByDepartmentIdIsNull();
+    
+    @EntityGraph(attributePaths = {"department"})
     List<Holiday> findByRestricted(boolean restricted);
 }
