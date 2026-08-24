@@ -14,6 +14,9 @@ import java.util.List;
 public interface LeaveRequestRepository extends JpaRepository<LeaveRequest, Long> {
     
     @EntityGraph(attributePaths = {"user", "category", "currentApprover"})
+    Page<LeaveRequest> findAll(Pageable pageable);
+    
+    @EntityGraph(attributePaths = {"user", "category", "currentApprover"})
     Page<LeaveRequest> findByUserId(Long userId, Pageable pageable);
     
     @EntityGraph(attributePaths = {"user", "category", "currentApprover"})

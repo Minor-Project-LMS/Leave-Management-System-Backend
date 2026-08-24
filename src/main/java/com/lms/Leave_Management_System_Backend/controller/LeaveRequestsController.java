@@ -81,14 +81,33 @@ public class LeaveRequestsController {
             @RequestParam(required = false) String toDate,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
-            @RequestParam(defaultValue = "appliedAt,desc") String sort,
+            @RequestParam(defaultValue = "recent") String sort,
             Authentication authentication) {
         
         String email = authentication.getName();
         User currentUser = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
 
-        Pageable pageable = PageRequest.of(page, size, Sort.by(sort));
+        // Map sort enum values to actual sort parameters
+        String sortProperty;
+        Sort.Direction direction;
+        
+        if ("recent".equalsIgnoreCase(sort)) {
+            sortProperty = "appliedAt";
+            direction = Sort.Direction.DESC;
+        } else if ("oldest".equalsIgnoreCase(sort)) {
+            sortProperty = "appliedAt";
+            direction = Sort.Direction.ASC;
+        } else {
+            // Fallback to legacy format "property,direction"
+            String[] sortParams = sort.split(",");
+            sortProperty = sortParams[0];
+            direction = sortParams.length > 1 && sortParams[1].equalsIgnoreCase("desc") 
+                    ? Sort.Direction.DESC 
+                    : Sort.Direction.ASC;
+        }
+        
+        Pageable pageable = PageRequest.of(page, size, Sort.by(direction, sortProperty));
         Page<LeaveRequest> leaveRequests;
 
         // Employees can only see their own requests
