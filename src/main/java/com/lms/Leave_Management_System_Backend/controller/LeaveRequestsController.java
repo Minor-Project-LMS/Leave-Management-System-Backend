@@ -21,7 +21,10 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -59,15 +62,59 @@ public class LeaveRequestsController {
         leaveRequest.setStartDate(request.getStartDate());
         leaveRequest.setEndDate(request.getEndDate());
         leaveRequest.setSessionType(LeaveRequest.SessionType.valueOf(request.getSessionType()));
-        leaveRequest.setTotalDays(request.getTotalDays());
+
+        // Calculate totalDays based on dates and session type
+        BigDecimal calculatedDays = calculateTotalDays(request.getStartDate(), request.getEndDate(), request.getSessionType());
+        leaveRequest.setTotalDays(calculatedDays);
+
         leaveRequest.setReason(request.getReason());
-        leaveRequest.setStatus(LeaveRequest.RequestStatus.DRAFT);
+        leaveRequest.setContactNumber(request.getContactNumber());
+        leaveRequest.setAddressDuringLeave(request.getAddressDuringLeave());
+
+        // Set handover information
+        if (request.getHandoverTo() != null) {
+            User handoverUser = userRepository.findById(request.getHandoverTo())
+                    .orElseThrow(() -> new ResourceNotFoundException("User", request.getHandoverTo()));
+            leaveRequest.setHandoverTo(handoverUser);
+        }
+        leaveRequest.setHandoverNotes(request.getHandoverNotes());
+
+        // Set status based on request or default to PENDING_L1
+        if (request.getStatus() != null && "DRAFT".equals(request.getStatus())) {
+            leaveRequest.setStatus(LeaveRequest.RequestStatus.DRAFT);
+        } else {
+            leaveRequest.setStatus(LeaveRequest.RequestStatus.PENDING_L1);
+        }
+
         leaveRequest.setAppliedAt(LocalDateTime.now());
 
         LeaveRequest saved = leaveRequestRepository.save(leaveRequest);
         LeaveRequestDto dto = toLeaveRequestDto(saved);
-        
+
         return ResponseEntity.status(201).body(new ApiResponse<>(true, dto));
+    }
+
+    /**
+     * Calculate total days for leave request excluding weekends
+     */
+    private BigDecimal calculateTotalDays(LocalDate startDate, LocalDate endDate, String sessionType) {
+        long businessDays = 0;
+
+        // Count business days (Monday-Friday)
+        LocalDate current = startDate;
+        while (!current.isAfter(endDate)) {
+            if (current.getDayOfWeek() != DayOfWeek.SATURDAY && current.getDayOfWeek() != DayOfWeek.SUNDAY) {
+                businessDays++;
+            }
+            current = current.plusDays(1);
+        }
+
+        // Adjust for session type
+        if ("FIRST_HALF".equals(sessionType) || "SECOND_HALF".equals(sessionType)) {
+            return BigDecimal.valueOf(businessDays * 0.5);
+        } else {
+            return BigDecimal.valueOf(businessDays);
+        }
     }
 
     @GetMapping
@@ -200,12 +247,28 @@ public class LeaveRequestsController {
         leaveRequest.setStartDate(request.getStartDate());
         leaveRequest.setEndDate(request.getEndDate());
         leaveRequest.setSessionType(LeaveRequest.SessionType.valueOf(request.getSessionType()));
-        leaveRequest.setTotalDays(request.getTotalDays());
+
+        // Recalculate totalDays based on updated dates and session type
+        BigDecimal calculatedDays = calculateTotalDays(request.getStartDate(), request.getEndDate(), request.getSessionType());
+        leaveRequest.setTotalDays(calculatedDays);
+
         leaveRequest.setReason(request.getReason());
+        leaveRequest.setContactNumber(request.getContactNumber());
+        leaveRequest.setAddressDuringLeave(request.getAddressDuringLeave());
+
+        // Update handover information
+        if (request.getHandoverTo() != null) {
+            User handoverUser = userRepository.findById(request.getHandoverTo())
+                    .orElseThrow(() -> new ResourceNotFoundException("User", request.getHandoverTo()));
+            leaveRequest.setHandoverTo(handoverUser);
+        } else {
+            leaveRequest.setHandoverTo(null);
+        }
+        leaveRequest.setHandoverNotes(request.getHandoverNotes());
 
         LeaveRequest saved = leaveRequestRepository.save(leaveRequest);
         LeaveRequestDto dto = toLeaveRequestDto(saved);
-        
+
         return ResponseEntity.ok(new ApiResponse<>(true, dto));
     }
 
@@ -244,18 +307,73 @@ public class LeaveRequestsController {
         return ResponseEntity.ok(new ApiResponse<>(true, dto));
     }
 
-    @PostMapping("/{requestId}/withdraw")
+    @PatchMapping("/{requestId}/decisions")
+    @RequireRole({"MANAGER", "HR_ADMIN"})
+    public ResponseEntity<ApiResponse<LeaveRequestDto>> recordDecision(
+            @PathVariable Long requestId,
+            @RequestBody LeaveDecisionRequest decisionRequest,
+            Authentication authentication) {
+
+        LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
+                .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
+
+        // Check if request is awaiting decision
+        if (leaveRequest.getStatus() != LeaveRequest.RequestStatus.PENDING_L1 &&
+            leaveRequest.getStatus() != LeaveRequest.RequestStatus.PENDING_L2) {
+            throw new ConflictException("Request is not currently awaiting a decision");
+        }
+
+        // Check if caller is the current approver
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        if (leaveRequest.getCurrentApprover() == null ||
+            !leaveRequest.getCurrentApprover().getId().equals(currentUser.getId())) {
+            throw new SecurityException("You are not the current approver for this request");
+        }
+
+        // Record the decision
+        if ("APPROVED".equals(decisionRequest.getDecision())) {
+            // Check if need HR approval based on days threshold
+            if (leaveRequest.getTotalDays().compareTo(BigDecimal.valueOf(5)) > 0 &&
+                leaveRequest.getStatus() == LeaveRequest.RequestStatus.PENDING_L1) {
+                // Move to HR approval
+                leaveRequest.setStatus(LeaveRequest.RequestStatus.PENDING_L2);
+                // In a real implementation, set currentApprover to HR admin
+            } else {
+                // Final approval
+                leaveRequest.setStatus(LeaveRequest.RequestStatus.APPROVED);
+                leaveRequest.setCurrentApprover(null);
+            }
+        } else if ("REJECTED".equals(decisionRequest.getDecision())) {
+            if (decisionRequest.getComments() == null || decisionRequest.getComments().trim().isEmpty()) {
+                throw new ConflictException("Comments are mandatory on rejection");
+            }
+            leaveRequest.setStatus(LeaveRequest.RequestStatus.REJECTED);
+            leaveRequest.setCurrentApprover(null);
+        } else {
+            throw new ConflictException("Invalid decision. Must be APPROVED or REJECTED");
+        }
+
+        LeaveRequest saved = leaveRequestRepository.save(leaveRequest);
+        LeaveRequestDto dto = toLeaveRequestDto(saved);
+
+        return ResponseEntity.ok(new ApiResponse<>(true, dto));
+    }
+
+    @PatchMapping("/{requestId}/withdraw")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
     public ResponseEntity<ApiResponse<LeaveRequestDto>> withdrawLeaveRequest(
             @PathVariable Long requestId,
             @RequestBody(required = false) com.lms.Leave_Management_System_Backend.dto.WithdrawRequest withdrawRequest,
             Authentication authentication) {
-        
+
         LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
                 .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
 
         // Check if can be withdrawn (only pending states)
-        if (leaveRequest.getStatus() != LeaveRequest.RequestStatus.PENDING_L1 && 
+        if (leaveRequest.getStatus() != LeaveRequest.RequestStatus.PENDING_L1 &&
             leaveRequest.getStatus() != LeaveRequest.RequestStatus.PENDING_L2) {
             throw new ConflictException("Only pending requests can be withdrawn");
         }
@@ -276,16 +394,16 @@ public class LeaveRequestsController {
 
         LeaveRequest saved = leaveRequestRepository.save(leaveRequest);
         LeaveRequestDto dto = toLeaveRequestDto(saved);
-        
+
         return ResponseEntity.ok(new ApiResponse<>(true, dto));
     }
 
     @GetMapping("/{requestId}/approvals")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
-    public ResponseEntity<List<CommentDto>> getApprovals(
+    public ResponseEntity<List<LeaveApprovalDto>> getApprovals(
             @PathVariable Long requestId,
             Authentication authentication) {
-        
+
         LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
                 .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
 
@@ -294,17 +412,24 @@ public class LeaveRequestsController {
         User currentUser = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
 
-        if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") && 
+        if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") &&
             !leaveRequest.getUser().getId().equals(currentUser.getId())) {
             throw new SecurityException("You can only view your own leave request approvals");
         }
 
         // Simplified implementation - would query actual approval history
-        List<CommentDto> approvals = List.of(
-                new CommentDto(1L, requestId, leaveRequest.getCurrentApprover() != null ? leaveRequest.getCurrentApprover().getId() : 0L, 
-                              leaveRequest.getCurrentApprover() != null ? leaveRequest.getCurrentApprover().getName() : "Pending", 
-                              "Pending approval", LocalDateTime.now())
-        );
+        LeaveApprovalDto approval = new LeaveApprovalDto();
+        approval.setId(leaveRequest.getId().intValue());
+        approval.setRequestId(leaveRequest.getId().intValue());
+        approval.setApproverId(leaveRequest.getCurrentApprover() != null ? leaveRequest.getCurrentApprover().getId().intValue() : 0);
+        approval.setApproverName(leaveRequest.getCurrentApprover() != null ? leaveRequest.getCurrentApprover().getName() : "Pending");
+        approval.setActingAsDelegateFor(null);
+        approval.setLevel(1);
+        approval.setDecision(leaveRequest.getStatus().name());
+        approval.setDecidedAt(null);
+        approval.setComments(null);
+
+        List<LeaveApprovalDto> approvals = List.of(approval);
 
         return ResponseEntity.ok(approvals);
     }

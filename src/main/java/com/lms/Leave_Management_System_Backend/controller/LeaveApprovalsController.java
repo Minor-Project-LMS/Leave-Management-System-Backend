@@ -16,7 +16,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
-@RequestMapping("/api/v1/leave-requests")
+@RequestMapping("/api/v1/leave-approvals")
 public class LeaveApprovalsController {
 
     private final LeaveRequestRepository leaveRequestRepository;
@@ -29,58 +29,8 @@ public class LeaveApprovalsController {
         this.userRepository = userRepository;
     }
 
-    @PatchMapping("/{requestId}/decisions")
-    @RequireRole({"MANAGER", "HR_ADMIN"})
-    public ResponseEntity<ApiResponse<LeaveRequestDto>> makeDecision(
-            @PathVariable Long requestId,
-            @Valid @RequestBody LeaveDecisionRequest request,
-            Authentication authentication) {
-        
-        LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
-                .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
-
-        // Check if request is in pending state
-        if (leaveRequest.getStatus() != LeaveRequest.RequestStatus.PENDING_L1 && 
-            leaveRequest.getStatus() != LeaveRequest.RequestStatus.PENDING_L2) {
-            throw new ConflictException("Only pending requests can be approved or rejected");
-        }
-
-        String email = authentication.getName();
-        User currentUser = userRepository.findByEmailIgnoreCase(email)
-                .orElseThrow(() -> new ResourceNotFoundException("User", email));
-
-        // Check if user is the current approver
-        if (leaveRequest.getCurrentApprover() == null || 
-            !leaveRequest.getCurrentApprover().getId().equals(currentUser.getId())) {
-            throw new SecurityException("You are not the current approver for this request");
-        }
-
-        // Process decision
-        if ("APPROVE".equalsIgnoreCase(request.getDecision())) {
-            if (leaveRequest.getStatus() == LeaveRequest.RequestStatus.PENDING_L1) {
-                // Check if needs L2 approval (simplified - always approve for now)
-                leaveRequest.setStatus(LeaveRequest.RequestStatus.APPROVED);
-                leaveRequest.setCurrentApprover(null);
-            } else {
-                leaveRequest.setStatus(LeaveRequest.RequestStatus.APPROVED);
-                leaveRequest.setCurrentApprover(null);
-            }
-        } else if ("REJECT".equalsIgnoreCase(request.getDecision())) {
-            if (request.getComment() == null || request.getComment().trim().isEmpty()) {
-                throw new BusinessRuleException("Comment is required for rejection");
-            }
-            leaveRequest.setStatus(LeaveRequest.RequestStatus.REJECTED);
-            leaveRequest.setReason(leaveRequest.getReason() + " [Rejection: " + request.getComment() + "]");
-            leaveRequest.setCurrentApprover(null);
-        } else {
-            throw new IllegalArgumentException("Invalid decision. Must be APPROVE or REJECT");
-        }
-
-        LeaveRequest saved = leaveRequestRepository.save(leaveRequest);
-        LeaveRequestDto dto = toLeaveRequestDto(saved);
-        
-        return ResponseEntity.ok(new ApiResponse<>(true, dto));
-    }
+    // This controller can be used for additional approval-related endpoints
+    // The main decision endpoint is now in LeaveRequestsController to match the OpenAPI contract
 
     private LeaveRequestDto toLeaveRequestDto(LeaveRequest request) {
         LeaveRequestDto dto = new LeaveRequestDto();

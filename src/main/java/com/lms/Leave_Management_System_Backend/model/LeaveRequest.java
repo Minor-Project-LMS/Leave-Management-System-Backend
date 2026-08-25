@@ -48,6 +48,19 @@ public class LeaveRequest {
     @Column(name = "reason")
     private String reason;
 
+    @Column(name = "contact_number")
+    private String contactNumber;
+
+    @Column(name = "address_during_leave")
+    private String addressDuringLeave;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "handover_to")
+    private User handoverTo;
+
+    @Column(name = "handover_notes")
+    private String handoverNotes;
+
     @Column(name = "status", nullable = false)
     @Enumerated(EnumType.STRING)
     private RequestStatus status = RequestStatus.DRAFT;
@@ -132,6 +145,38 @@ public class LeaveRequest {
 
     public void setReason(String reason) {
         this.reason = reason;
+    }
+
+    public String getContactNumber() {
+        return contactNumber;
+    }
+
+    public void setContactNumber(String contactNumber) {
+        this.contactNumber = contactNumber;
+    }
+
+    public String getAddressDuringLeave() {
+        return addressDuringLeave;
+    }
+
+    public void setAddressDuringLeave(String addressDuringLeave) {
+        this.addressDuringLeave = addressDuringLeave;
+    }
+
+    public User getHandoverTo() {
+        return handoverTo;
+    }
+
+    public void setHandoverTo(User handoverTo) {
+        this.handoverTo = handoverTo;
+    }
+
+    public String getHandoverNotes() {
+        return handoverNotes;
+    }
+
+    public void setHandoverNotes(String handoverNotes) {
+        this.handoverNotes = handoverNotes;
     }
 
     public RequestStatus getStatus() {

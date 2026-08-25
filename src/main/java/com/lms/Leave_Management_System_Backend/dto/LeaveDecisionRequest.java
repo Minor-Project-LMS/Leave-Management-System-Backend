@@ -1,11 +1,15 @@
 package com.lms.Leave_Management_System_Backend.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 
 public class LeaveDecisionRequest {
-    private String decision; // APPROVE or REJECT
-    @NotBlank(message = "Comment is required for rejection")
-    private String comment;
+    @NotNull
+    private String decision; // APPROVED or REJECTED
+
+    @Size(max = 2000)
+    private String comments;
 
     public LeaveDecisionRequest() {
     }
@@ -18,11 +22,11 @@ public class LeaveDecisionRequest {
         this.decision = decision;
     }
 
-    public String getComment() {
-        return comment;
+    public String getComments() {
+        return comments;
     }
 
-    public void setComment(String comment) {
-        this.comment = comment;
+    public void setComments(String comments) {
+        this.comments = comments;
     }
 }
