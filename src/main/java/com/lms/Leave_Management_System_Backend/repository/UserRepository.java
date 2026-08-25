@@ -46,4 +46,8 @@ public interface UserRepository extends JpaRepository<User, Long> {
     
     @EntityGraph(attributePaths = {"role", "department", "reportsTo"})
     Optional<User> findWithReportsToById(Long id);
+    
+    @EntityGraph(attributePaths = {"role", "department", "reportsTo"})
+    @Query("SELECT u FROM User u WHERE u.role.roleCode = :roleCode AND u.employmentStatus = 'ACTIVE'")
+    Optional<User> findFirstByRole_RoleCode(@Param("roleCode") String roleCode);
 }

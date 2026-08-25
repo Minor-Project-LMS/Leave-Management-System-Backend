@@ -51,4 +51,12 @@ public interface ApprovalDelegationRepository extends JpaRepository<ApprovalDele
             @Param("delegatorId") Long delegatorId,
             @Param("startDate") LocalDate startDate,
             @Param("endDate") LocalDate endDate);
+    
+    @EntityGraph(attributePaths = {"delegator", "delegate"})
+    @Query("SELECT d FROM ApprovalDelegation d WHERE d.delegator.id = :delegatorId " +
+           "AND d.delegate.id = :delegateId AND d.startDate <= :date AND d.endDate >= :date AND d.isActive = true")
+    Optional<ApprovalDelegation> findActiveDelegation(
+            @Param("delegatorId") Long delegatorId,
+            @Param("delegateId") Long delegateId,
+            @Param("date") LocalDate date);
 }

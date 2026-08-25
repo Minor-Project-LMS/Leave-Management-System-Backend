@@ -31,10 +31,11 @@ public class DepartmentsController {
     @GetMapping
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
     public ResponseEntity<PaginatedResponse<DepartmentDto>> listDepartments(
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int limit) {
         
-        Pageable pageable = PageRequest.of(page, size);
+        // Contract uses 1-based page numbers, Spring uses 0-based
+        Pageable pageable = PageRequest.of(page - 1, limit);
         Page<Department> departments = departmentRepository.findAll(pageable);
 
         List<DepartmentDto> departmentDtos = departments.getContent().stream()
@@ -42,8 +43,8 @@ public class DepartmentsController {
                 .collect(Collectors.toList());
 
         PageResponse pageResponse = new PageResponse(
-                departments.getNumber(),
-                departments.getSize(),
+                page, // Return 1-based page number as per contract
+                limit,
                 departments.getTotalElements(),
                 departments.getTotalPages()
         );

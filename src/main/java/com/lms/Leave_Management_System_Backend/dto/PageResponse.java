@@ -2,17 +2,17 @@ package com.lms.Leave_Management_System_Backend.dto;
 
 public class PageResponse<T> {
     private int page;
-    private int size;
-    private long totalElements;
+    private int limit;
+    private long totalCount;
     private int totalPages;
 
     public PageResponse() {
     }
 
-    public PageResponse(int page, int size, long totalElements, int totalPages) {
+    public PageResponse(int page, int limit, long totalCount, int totalPages) {
         this.page = page;
-        this.size = size;
-        this.totalElements = totalElements;
+        this.limit = limit;
+        this.totalCount = totalCount;
         this.totalPages = totalPages;
     }
 
@@ -24,20 +24,20 @@ public class PageResponse<T> {
         this.page = page;
     }
 
-    public int getSize() {
-        return size;
+    public int getLimit() {
+        return limit;
     }
 
-    public void setSize(int size) {
-        this.size = size;
+    public void setLimit(int limit) {
+        this.limit = limit;
     }
 
-    public long getTotalElements() {
-        return totalElements;
+    public long getTotalCount() {
+        return totalCount;
     }
 
-    public void setTotalElements(long totalElements) {
-        this.totalElements = totalElements;
+    public void setTotalCount(long totalCount) {
+        this.totalCount = totalCount;
     }
 
     public int getTotalPages() {

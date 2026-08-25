@@ -31,15 +31,15 @@ public class TeamController {
     public ResponseEntity<PaginatedResponse<TeamMember>> listTeamMembers(
             @RequestParam(required = false) Integer departmentId,
             @RequestParam(required = false) String q,
-            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int limit,
             Authentication authentication) {
-        
+
         String email = authentication.getName();
         User currentUser = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
 
-        Pageable pageable = PageRequest.of(page, limit, Sort.by("name").ascending());
+        Pageable pageable = PageRequest.of(page - 1, limit, Sort.by("name").ascending());
 
         List<User> teamMembers;
         if (currentUser.getRole().getRoleCode().equals("MANAGER")) {
@@ -66,8 +66,8 @@ public class TeamController {
                     .collect(Collectors.toList());
         }
 
-        // Apply pagination manually
-        int start = page * limit;
+        // Apply pagination manually (convert 1-based to 0-based)
+        int start = (page - 1) * limit;
         int end = Math.min(start + limit, teamMembers.size());
         List<User> paginatedMembers = teamMembers.subList(start, end);
 

@@ -5,12 +5,19 @@ import com.lms.Leave_Management_System_Backend.exception.BusinessRuleException;
 import com.lms.Leave_Management_System_Backend.exception.ConflictException;
 import com.lms.Leave_Management_System_Backend.exception.ResourceNotFoundException;
 import com.lms.Leave_Management_System_Backend.exception.SecurityException;
+import com.lms.Leave_Management_System_Backend.model.ApprovalDelegation;
+import com.lms.Leave_Management_System_Backend.model.LeaveApproval;
+import com.lms.Leave_Management_System_Backend.model.LeaveLedger;
 import com.lms.Leave_Management_System_Backend.model.LeaveRequest;
 import com.lms.Leave_Management_System_Backend.model.User;
+import com.lms.Leave_Management_System_Backend.repository.ApprovalDelegationRepository;
+import com.lms.Leave_Management_System_Backend.repository.LeaveApprovalRepository;
 import com.lms.Leave_Management_System_Backend.repository.LeaveCategoryRepository;
+import com.lms.Leave_Management_System_Backend.repository.LeaveLedgerRepository;
 import com.lms.Leave_Management_System_Backend.repository.LeaveRequestRepository;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
+import org.springframework.transaction.annotation.Transactional;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -26,6 +33,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @RestController
@@ -35,14 +43,23 @@ public class LeaveRequestsController {
     private final LeaveRequestRepository leaveRequestRepository;
     private final UserRepository userRepository;
     private final LeaveCategoryRepository leaveCategoryRepository;
+    private final LeaveApprovalRepository leaveApprovalRepository;
+    private final ApprovalDelegationRepository delegationRepository;
+    private final LeaveLedgerRepository leaveLedgerRepository;
 
     public LeaveRequestsController(
             LeaveRequestRepository leaveRequestRepository,
             UserRepository userRepository,
-            LeaveCategoryRepository leaveCategoryRepository) {
+            LeaveCategoryRepository leaveCategoryRepository,
+            LeaveApprovalRepository leaveApprovalRepository,
+            ApprovalDelegationRepository delegationRepository,
+            LeaveLedgerRepository leaveLedgerRepository) {
         this.leaveRequestRepository = leaveRequestRepository;
         this.userRepository = userRepository;
         this.leaveCategoryRepository = leaveCategoryRepository;
+        this.leaveApprovalRepository = leaveApprovalRepository;
+        this.delegationRepository = delegationRepository;
+        this.leaveLedgerRepository = leaveLedgerRepository;
     }
 
     @PostMapping
@@ -84,6 +101,22 @@ public class LeaveRequestsController {
             leaveRequest.setStatus(LeaveRequest.RequestStatus.DRAFT);
         } else {
             leaveRequest.setStatus(LeaveRequest.RequestStatus.PENDING_L1);
+            
+            // Set the approver when creating a non-DRAFT request
+            User reportsTo = user.getReportsTo();
+            if (reportsTo != null) {
+                // Check if there's an active delegation for the manager
+                Optional<ApprovalDelegation> activeDelegation = 
+                    delegationRepository.findActiveDelegationsForDelegatorOnDate(reportsTo.getId(), java.time.LocalDate.now())
+                    .stream()
+                    .findFirst();
+                
+                if (activeDelegation.isPresent()) {
+                    leaveRequest.setCurrentApprover(activeDelegation.get().getDelegate());
+                } else {
+                    leaveRequest.setCurrentApprover(reportsTo);
+                }
+            }
         }
 
         leaveRequest.setAppliedAt(LocalDateTime.now());
@@ -126,8 +159,8 @@ public class LeaveRequestsController {
             @RequestParam(required = false) Integer departmentId,
             @RequestParam(required = false) String fromDate,
             @RequestParam(required = false) String toDate,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int limit,
             @RequestParam(defaultValue = "recent") String sort,
             Authentication authentication) {
         
@@ -154,7 +187,8 @@ public class LeaveRequestsController {
                     : Sort.Direction.ASC;
         }
         
-        Pageable pageable = PageRequest.of(page, size, Sort.by(direction, sortProperty));
+        // Contract uses 1-based page numbers, Spring uses 0-based
+        Pageable pageable = PageRequest.of(page - 1, limit, Sort.by(direction, sortProperty));
         Page<LeaveRequest> leaveRequests;
 
         // Employees can only see their own requests
@@ -187,8 +221,8 @@ public class LeaveRequestsController {
                 .collect(Collectors.toList());
 
         PageResponse pageResponse = new PageResponse(
-                leaveRequests.getNumber(),
-                leaveRequests.getSize(),
+                page, // Return 1-based page number as per contract
+                limit,
                 leaveRequests.getTotalElements(),
                 leaveRequests.getTotalPages()
         );
@@ -294,10 +328,52 @@ public class LeaveRequestsController {
             throw new SecurityException("You can only submit your own leave requests");
         }
 
+        // Check if user has sufficient leave balance
+        int currentYear = java.time.Year.now().getValue();
+        Optional<LeaveLedger> ledger = leaveLedgerRepository.findByUserIdAndCategoryIdAndFiscalYear(
+            leaveRequest.getUser().getId(), 
+            leaveRequest.getCategory().getId(), 
+            currentYear
+        );
+        
+        if (ledger.isPresent() && ledger.get().getClosingBalance().compareTo(leaveRequest.getTotalDays()) < 0) {
+            throw new ConflictException("Insufficient leave balance. Available: " + ledger.get().getClosingBalance() + ", Required: " + leaveRequest.getTotalDays());
+        }
+
+        // Check for overlapping approved requests
+        List<LeaveRequest> overlappingApproved = leaveRequestRepository.findByUserIdAndStatus(
+            leaveRequest.getUser().getId(),
+            LeaveRequest.RequestStatus.APPROVED
+        );
+        
+        // Filter for overlapping dates
+        boolean hasOverlap = overlappingApproved.stream()
+            .anyMatch(existing -> {
+                return !(existing.getEndDate().isBefore(leaveRequest.getStartDate()) || 
+                         existing.getStartDate().isAfter(leaveRequest.getEndDate()));
+            });
+        
+        if (hasOverlap) {
+            throw new ConflictException("You have overlapping approved leave requests for this period");
+        }
+
         // Set to pending and assign approver
         leaveRequest.setStatus(LeaveRequest.RequestStatus.PENDING_L1);
-        if (leaveRequest.getUser().getReportsTo() != null) {
-            leaveRequest.setCurrentApprover(leaveRequest.getUser().getReportsTo());
+        
+        // Resolve the approver considering delegation
+        User reportsTo = leaveRequest.getUser().getReportsTo();
+        if (reportsTo != null) {
+            // Check if there's an active delegation for the manager
+            Optional<ApprovalDelegation> activeDelegation = 
+                delegationRepository.findActiveDelegationsForDelegatorOnDate(reportsTo.getId(), java.time.LocalDate.now())
+                .stream()
+                .findFirst();
+            
+            if (activeDelegation.isPresent()) {
+                leaveRequest.setCurrentApprover(activeDelegation.get().getDelegate());
+            } else {
+                leaveRequest.setCurrentApprover(reportsTo);
+            }
         }
         leaveRequest.setAppliedAt(LocalDateTime.now());
 
@@ -309,6 +385,7 @@ public class LeaveRequestsController {
 
     @PatchMapping("/{requestId}/decisions")
     @RequireRole({"MANAGER", "HR_ADMIN"})
+    @Transactional
     public ResponseEntity<ApiResponse<LeaveRequestDto>> recordDecision(
             @PathVariable Long requestId,
             @RequestBody LeaveDecisionRequest decisionRequest,
@@ -323,37 +400,111 @@ public class LeaveRequestsController {
             throw new ConflictException("Request is not currently awaiting a decision");
         }
 
-        // Check if caller is the current approver
+        // Check if caller is the current approver or an active delegate
         String email = authentication.getName();
         User currentUser = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
 
-        if (leaveRequest.getCurrentApprover() == null ||
-            !leaveRequest.getCurrentApprover().getId().equals(currentUser.getId())) {
-            throw new SecurityException("You are not the current approver for this request");
+        User currentApprover = leaveRequest.getCurrentApprover();
+        if (currentApprover == null) {
+            throw new ConflictException("This request does not have a current approver");
         }
 
-        // Record the decision
+        // Check if user is the designated approver or an active delegate
+        boolean isDelegatedApprover = false;
+        if (!currentApprover.getId().equals(currentUser.getId())) {
+            // Check if there's an active delegation
+            Optional<ApprovalDelegation> activeDelegation = 
+                delegationRepository.findActiveDelegation(currentApprover.getId(), currentUser.getId(), java.time.LocalDate.now());
+            
+            if (activeDelegation.isEmpty()) {
+                throw new SecurityException("You are not the current approver or an active delegate for this request");
+            }
+            isDelegatedApprover = true;
+        }
+
+        // Validate decision value matches contract
+        if (!"APPROVED".equals(decisionRequest.getDecision()) && !"REJECTED".equals(decisionRequest.getDecision())) {
+            throw new ConflictException("Invalid decision. Must be APPROVED or REJECTED");
+        }
+
+        // Comments mandatory for rejection
+        if ("REJECTED".equals(decisionRequest.getDecision()) && 
+            (decisionRequest.getComments() == null || decisionRequest.getComments().trim().isEmpty())) {
+            throw new ConflictException("Comments are mandatory on rejection");
+        }
+
+        // Check for overlapping approved requests for the same user
+        if ("APPROVED".equals(decisionRequest.getDecision())) {
+            List<LeaveRequest> overlappingApproved = leaveRequestRepository.findByUserIdAndStatus(
+                leaveRequest.getUser().getId(),
+                LeaveRequest.RequestStatus.APPROVED
+            );
+            
+            // Filter for overlapping dates (excluding current request)
+            boolean hasOverlap = overlappingApproved.stream()
+                .filter(existing -> !existing.getId().equals(leaveRequest.getId()))
+                .anyMatch(existing -> {
+                    return !(existing.getEndDate().isBefore(leaveRequest.getStartDate()) || 
+                             existing.getStartDate().isAfter(leaveRequest.getEndDate()));
+                });
+            
+            if (hasOverlap) {
+                throw new ConflictException("Employee has overlapping approved leave requests for this period");
+            }
+        }
+
+        // Record the approval history
+        LeaveApproval approval = new LeaveApproval();
+        approval.setRequest(leaveRequest);
+        approval.setApprover(currentUser);
+        approval.setLevel(leaveRequest.getStatus() == LeaveRequest.RequestStatus.PENDING_L1 ? (short) 1 : (short) 2);
+        approval.setDecision("APPROVED".equals(decisionRequest.getDecision()) ? 
+            LeaveApproval.Decision.APPROVED : LeaveApproval.Decision.REJECTED);
+        approval.setDecidedAt(LocalDateTime.now());
+        approval.setComments(decisionRequest.getComments());
+        if (isDelegatedApprover) {
+            approval.setActingAsDelegateFor(currentApprover);
+        }
+        leaveApprovalRepository.save(approval);
+
+        // Update the request status
         if ("APPROVED".equals(decisionRequest.getDecision())) {
             // Check if need HR approval based on days threshold
             if (leaveRequest.getTotalDays().compareTo(BigDecimal.valueOf(5)) > 0 &&
                 leaveRequest.getStatus() == LeaveRequest.RequestStatus.PENDING_L1) {
                 // Move to HR approval
                 leaveRequest.setStatus(LeaveRequest.RequestStatus.PENDING_L2);
-                // In a real implementation, set currentApprover to HR admin
+                // Set currentApprover to first HR admin (simplified)
+                User hrAdmin = userRepository.findFirstByRole_RoleCode("HR_ADMIN")
+                    .orElseThrow(() -> new ResourceNotFoundException("HR Admin", "role"));
+                leaveRequest.setCurrentApprover(hrAdmin);
             } else {
-                // Final approval
+                // Final approval - update leave ledger
+                int currentYear = java.time.Year.now().getValue();
+                Optional<LeaveLedger> ledger = leaveLedgerRepository.findByUserIdAndCategoryIdAndFiscalYear(
+                    leaveRequest.getUser().getId(), 
+                    leaveRequest.getCategory().getId(), 
+                    currentYear
+                );
+                
+                if (ledger.isPresent()) {
+                    LeaveLedger leaveLedger = ledger.get();
+                    if (leaveLedger.getClosingBalance().compareTo(leaveRequest.getTotalDays()) < 0) {
+                        throw new ConflictException("Insufficient leave balance at approval time");
+                    }
+                    leaveLedger.setUsed(leaveLedger.getUsed().add(leaveRequest.getTotalDays()));
+                    leaveLedger.setClosingBalance(leaveLedger.getClosingBalance().subtract(leaveRequest.getTotalDays()));
+                    leaveLedgerRepository.save(leaveLedger);
+                }
+                
                 leaveRequest.setStatus(LeaveRequest.RequestStatus.APPROVED);
                 leaveRequest.setCurrentApprover(null);
             }
-        } else if ("REJECTED".equals(decisionRequest.getDecision())) {
-            if (decisionRequest.getComments() == null || decisionRequest.getComments().trim().isEmpty()) {
-                throw new ConflictException("Comments are mandatory on rejection");
-            }
+        } else {
+            // Rejected
             leaveRequest.setStatus(LeaveRequest.RequestStatus.REJECTED);
             leaveRequest.setCurrentApprover(null);
-        } else {
-            throw new ConflictException("Invalid decision. Must be APPROVED or REJECTED");
         }
 
         LeaveRequest saved = leaveRequestRepository.save(leaveRequest);
@@ -362,7 +513,7 @@ public class LeaveRequestsController {
         return ResponseEntity.ok(new ApiResponse<>(true, dto));
     }
 
-    @PatchMapping("/{requestId}/withdraw")
+    @PostMapping("/{requestId}/withdraw")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
     public ResponseEntity<ApiResponse<LeaveRequestDto>> withdrawLeaveRequest(
             @PathVariable Long requestId,
@@ -417,21 +568,29 @@ public class LeaveRequestsController {
             throw new SecurityException("You can only view your own leave request approvals");
         }
 
-        // Simplified implementation - would query actual approval history
-        LeaveApprovalDto approval = new LeaveApprovalDto();
-        approval.setId(leaveRequest.getId().intValue());
-        approval.setRequestId(leaveRequest.getId().intValue());
-        approval.setApproverId(leaveRequest.getCurrentApprover() != null ? leaveRequest.getCurrentApprover().getId().intValue() : 0);
-        approval.setApproverName(leaveRequest.getCurrentApprover() != null ? leaveRequest.getCurrentApprover().getName() : "Pending");
-        approval.setActingAsDelegateFor(null);
-        approval.setLevel(1);
-        approval.setDecision(leaveRequest.getStatus().name());
-        approval.setDecidedAt(null);
-        approval.setComments(null);
+        // Query actual approval history from leave_approvals table
+        List<LeaveApproval> approvals = leaveApprovalRepository.findByRequestId(requestId);
 
-        List<LeaveApprovalDto> approvals = List.of(approval);
+        List<LeaveApprovalDto> approvalDtos = approvals.stream()
+                .map(this::toLeaveApprovalDto)
+                .collect(Collectors.toList());
 
-        return ResponseEntity.ok(approvals);
+        return ResponseEntity.ok(approvalDtos);
+    }
+
+    private LeaveApprovalDto toLeaveApprovalDto(LeaveApproval approval) {
+        LeaveApprovalDto dto = new LeaveApprovalDto();
+        dto.setId(approval.getId().intValue());
+        dto.setRequestId(approval.getRequest().getId().intValue());
+        dto.setApproverId(approval.getApprover().getId().intValue());
+        dto.setApproverName(approval.getApprover().getName());
+        dto.setActingAsDelegateFor(approval.getActingAsDelegateFor() != null ? 
+            approval.getActingAsDelegateFor().getId().intValue() : null);
+        dto.setLevel(approval.getLevel().intValue());
+        dto.setDecision(approval.getDecision().name());
+        dto.setDecidedAt(approval.getDecidedAt());
+        dto.setComments(approval.getComments());
+        return dto;
     }
 
     @GetMapping("/{requestId}/comments")

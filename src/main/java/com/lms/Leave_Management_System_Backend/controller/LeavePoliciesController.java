@@ -42,11 +42,11 @@ public class LeavePoliciesController {
             @RequestParam(required = false) Integer categoryId,
             @RequestParam(required = false) Integer departmentId,
             @RequestParam(required = false) String status,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int limit,
             @RequestParam(required = false) String sort) {
-        
-        Pageable pageable = PageRequest.of(page, size, 
+
+        Pageable pageable = PageRequest.of(page - 1, limit,
             sort != null ? Sort.by(sort) : Sort.by("effectiveFrom").descending());
         
         Page<LeavePolicy> policies;
@@ -61,8 +61,8 @@ public class LeavePoliciesController {
                 .collect(Collectors.toList());
 
         PageResponse pageResponse = new PageResponse(
-            policies.getNumber(),
-            policies.getSize(),
+            page,
+            limit,
             policies.getTotalElements(),
             policies.getTotalPages()
         );

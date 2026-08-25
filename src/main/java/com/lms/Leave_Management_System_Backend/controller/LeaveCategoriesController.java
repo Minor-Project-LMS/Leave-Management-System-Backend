@@ -29,10 +29,10 @@ public class LeaveCategoriesController {
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
     public ResponseEntity<PaginatedResponse<LeaveCategoryDto>> listLeaveCategories(
             @RequestParam(required = false) String status,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
-        
-        Pageable pageable = PageRequest.of(page, size);
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int limit) {
+
+        Pageable pageable = PageRequest.of(page - 1, limit);
         Page<LeaveCategory> categoriesPage = leaveCategoryRepository.findAll(pageable);
 
         List<LeaveCategory> categories = categoriesPage.getContent();
@@ -53,8 +53,8 @@ public class LeaveCategoriesController {
                 .collect(Collectors.toList());
 
         PageResponse pageResponse = new PageResponse(
-                categoriesPage.getNumber(),
-                categoriesPage.getSize(),
+                page,
+                limit,
                 categoriesPage.getTotalElements(),
                 categoriesPage.getTotalPages()
         );

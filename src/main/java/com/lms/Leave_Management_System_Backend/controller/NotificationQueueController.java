@@ -36,11 +36,11 @@ public class NotificationQueueController {
             @RequestParam(required = false) String templateCode,
             @RequestParam(required = false) String dateFrom,
             @RequestParam(required = false) String dateTo,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int limit,
             Authentication authentication) {
 
-        Pageable pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
+        Pageable pageable = PageRequest.of(page - 1, limit, Sort.by("createdAt").descending());
         
         Page<NotificationQueue> notificationQueuePage;
         
@@ -75,7 +75,7 @@ public class NotificationQueueController {
                 .map(this::convertToDto)
                 .collect(Collectors.toList());
 
-        PageResponse pageResponse = new PageResponse(page, size, (int) notificationQueuePage.getTotalElements(), notificationQueuePage.getTotalPages());
+        PageResponse pageResponse = new PageResponse(page, limit, (int) notificationQueuePage.getTotalElements(), notificationQueuePage.getTotalPages());
         
         return ResponseEntity.ok(new PaginatedResponse<>(true, queueItems, pageResponse));
     }

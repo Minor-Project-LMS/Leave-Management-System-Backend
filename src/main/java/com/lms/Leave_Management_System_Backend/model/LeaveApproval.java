@@ -39,6 +39,10 @@ public class LeaveApproval {
     @Column(name = "comments")
     private String comments;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "acting_as_delegate_for")
+    private User actingAsDelegateFor;
+
     public enum Decision {
         APPROVED, REJECTED
     }
@@ -100,5 +104,13 @@ public class LeaveApproval {
 
     public void setComments(String comments) {
         this.comments = comments;
+    }
+
+    public User getActingAsDelegateFor() {
+        return actingAsDelegateFor;
+    }
+
+    public void setActingAsDelegateFor(User actingAsDelegateFor) {
+        this.actingAsDelegateFor = actingAsDelegateFor;
     }
 }

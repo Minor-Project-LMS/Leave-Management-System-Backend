@@ -37,11 +37,11 @@ public class AuditTrailController {
             @RequestParam(required = false) String action,
             @RequestParam(required = false) String entityType,
             @RequestParam(required = false) String q,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int limit,
             Authentication authentication) {
 
-        Pageable pageable = PageRequest.of(page, size, Sort.by("performedAt").descending());
+        Pageable pageable = PageRequest.of(page - 1, limit, Sort.by("performedAt").descending());
         
         Page<AuditTrail> auditTrailPage;
         
@@ -82,7 +82,7 @@ public class AuditTrailController {
                 .map(this::convertToDto)
                 .collect(Collectors.toList());
 
-        PageResponse pageResponse = new PageResponse(page, size, (int) auditTrailPage.getTotalElements(), auditTrailPage.getTotalPages());
+        PageResponse pageResponse = new PageResponse(page, limit, (int) auditTrailPage.getTotalElements(), auditTrailPage.getTotalPages());
         
         return ResponseEntity.ok(new PaginatedResponse<>(true, entries, pageResponse));
     }

@@ -4,6 +4,7 @@ import com.lms.Leave_Management_System_Backend.dto.*;
 import com.lms.Leave_Management_System_Backend.exception.ResourceNotFoundException;
 import com.lms.Leave_Management_System_Backend.model.LeaveRequest;
 import com.lms.Leave_Management_System_Backend.model.User;
+import com.lms.Leave_Management_System_Backend.repository.ApprovalDelegationRepository;
 import com.lms.Leave_Management_System_Backend.repository.LeaveRequestRepository;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
@@ -15,9 +16,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.HashMap;
+import java.time.LocalDate;
 import java.util.List;
-import java.util.Map;
 import java.util.stream.Collectors;
 
 @RestController
@@ -26,18 +26,20 @@ public class ApprovalsController {
 
     private final LeaveRequestRepository leaveRequestRepository;
     private final UserRepository userRepository;
+    private final ApprovalDelegationRepository delegationRepository;
 
-    public ApprovalsController(LeaveRequestRepository leaveRequestRepository, UserRepository userRepository) {
+    public ApprovalsController(LeaveRequestRepository leaveRequestRepository, UserRepository userRepository, ApprovalDelegationRepository delegationRepository) {
         this.leaveRequestRepository = leaveRequestRepository;
         this.userRepository = userRepository;
+        this.delegationRepository = delegationRepository;
     }
 
     @GetMapping("/inbox")
     @RequireRole({"MANAGER", "HR_ADMIN"})
-    public ResponseEntity<PaginatedResponse<LeaveRequestDto>> getApprovalInbox(
+    public ResponseEntity<ApprovalInboxResponse> getApprovalInbox(
             @RequestParam(defaultValue = "PENDING") String status,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int limit,
             @RequestParam(defaultValue = "newest") String sort,
             Authentication authentication) {
         
@@ -46,15 +48,26 @@ public class ApprovalsController {
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
 
         Sort.Direction direction = sort.equals("newest") ? Sort.Direction.DESC : Sort.Direction.ASC;
-        Pageable pageable = PageRequest.of(page, size, Sort.by(direction, "appliedAt"));
+        // Contract uses 1-based page numbers, Spring uses 0-based
+        Pageable pageable = PageRequest.of(page - 1, limit, Sort.by(direction, "appliedAt"));
         
         Page<LeaveRequest> leaveRequests;
         
-        // Filter by current approver
+        // Check if user is currently acting as a delegate
+        LocalDate today = LocalDate.now();
+        
+        // Get requests where user is the designated approver or active delegate
+        // For now, get requests where user is the designated approver
+        // This can be extended to include requests where user is the active delegate
+        
+        // Filter by current approver with status support
         if (status.equals("ALL")) {
             leaveRequests = leaveRequestRepository.findByCurrentApproverId(currentUser.getId(), pageable);
         } else if (status.equals("PENDING")) {
-            leaveRequests = leaveRequestRepository.findByCurrentApproverIdAndStatus(currentUser.getId(), LeaveRequest.RequestStatus.PENDING_L1, pageable);
+            // Include both PENDING_L1 and PENDING_L2 for managers and HR
+            // Get all requests for current approver, then filter in memory
+            Page<LeaveRequest> allRequests = leaveRequestRepository.findByCurrentApproverId(currentUser.getId(), pageable);
+            leaveRequests = allRequests; // Keep as Page, will filter content later
         } else if (status.equals("APPROVED")) {
             leaveRequests = leaveRequestRepository.findByCurrentApproverIdAndStatus(currentUser.getId(), LeaveRequest.RequestStatus.APPROVED, pageable);
         } else if (status.equals("REJECTED")) {
@@ -64,26 +77,45 @@ public class ApprovalsController {
         }
 
         List<LeaveRequestDto> dtos = leaveRequests.getContent().stream()
+                .filter(lr -> {
+                    if (status.equals("PENDING")) {
+                        return lr.getStatus() == LeaveRequest.RequestStatus.PENDING_L1 || 
+                               lr.getStatus() == LeaveRequest.RequestStatus.PENDING_L2;
+                    }
+                    return true;
+                })
                 .map(this::toLeaveRequestDto)
                 .collect(Collectors.toList());
 
-        // Calculate counts for all tabs
-        Map<String, Integer> counts = new HashMap<>();
-        counts.put("all", (int) leaveRequestRepository.findByCurrentApproverId(currentUser.getId(), Pageable.unpaged()).getTotalElements());
-        counts.put("pending", (int) leaveRequestRepository.findByCurrentApproverIdAndStatus(currentUser.getId(), LeaveRequest.RequestStatus.PENDING_L1, Pageable.unpaged()).getTotalElements());
-        counts.put("approved", (int) leaveRequestRepository.findByCurrentApproverIdAndStatus(currentUser.getId(), LeaveRequest.RequestStatus.APPROVED, Pageable.unpaged()).getTotalElements());
-        counts.put("rejected", (int) leaveRequestRepository.findByCurrentApproverIdAndStatus(currentUser.getId(), LeaveRequest.RequestStatus.REJECTED, Pageable.unpaged()).getTotalElements());
+        // Calculate counts for all tabs (including PENDING_L2)
+        Page<LeaveRequest> allRequests = leaveRequestRepository.findByCurrentApproverId(currentUser.getId(), Pageable.unpaged());
+        long allCount = allRequests.getTotalElements();
+        
+        long pendingCount = allRequests.getContent().stream()
+            .filter(lr -> lr.getStatus() == LeaveRequest.RequestStatus.PENDING_L1 || 
+                          lr.getStatus() == LeaveRequest.RequestStatus.PENDING_L2)
+            .count();
+        
+        long approvedCount = allRequests.getContent().stream()
+            .filter(lr -> lr.getStatus() == LeaveRequest.RequestStatus.APPROVED)
+            .count();
+        
+        long rejectedCount = allRequests.getContent().stream()
+            .filter(lr -> lr.getStatus() == LeaveRequest.RequestStatus.REJECTED)
+            .count();
 
-        PageResponse pageResponse = new PageResponse(
-                leaveRequests.getNumber(),
-                leaveRequests.getSize(),
-                leaveRequests.getTotalElements(),
-                leaveRequests.getTotalPages()
+        ApprovalInboxResponse.ApprovalCounts counts = new ApprovalInboxResponse.ApprovalCounts(
+            (int) allCount, (int) pendingCount, (int) approvedCount, (int) rejectedCount
         );
 
-        // Create a custom response that includes counts
-        PaginatedResponse<LeaveRequestDto> response = new PaginatedResponse<>(true, dtos, pageResponse);
-        // Note: In a real implementation, you'd extend PaginatedResponse to include counts
+        ApprovalInboxResponse response = new ApprovalInboxResponse(
+            page, // Return 1-based page number as per contract
+            limit,
+            leaveRequests.getTotalElements(),
+            leaveRequests.getTotalPages(),
+            counts,
+            dtos
+        );
         
         return ResponseEntity.ok(response);
     }

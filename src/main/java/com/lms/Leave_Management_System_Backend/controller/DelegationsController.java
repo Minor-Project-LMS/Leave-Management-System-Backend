@@ -36,10 +36,10 @@ public class DelegationsController {
     public ResponseEntity<PaginatedResponse<DelegationDto>> listDelegations(
             @RequestParam(required = false) String status,
             @RequestParam(required = false) Long delegatorId,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int limit,
             Authentication authentication) {
-        
+
         String email = authentication.getName();
         User currentUser = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
@@ -49,7 +49,7 @@ public class DelegationsController {
             delegatorId = currentUser.getId();
         }
 
-        Pageable pageable = PageRequest.of(page, size);
+        Pageable pageable = PageRequest.of(page - 1, limit);
         Page<ApprovalDelegation> delegations;
 
         if (delegatorId != null) {
@@ -65,8 +65,8 @@ public class DelegationsController {
                 .collect(Collectors.toList());
 
         PageResponse pageResponse = new PageResponse(
-                delegations.getNumber(),
-                delegations.getSize(),
+                page,
+                limit,
                 delegations.getTotalElements(),
                 delegations.getTotalPages()
         );

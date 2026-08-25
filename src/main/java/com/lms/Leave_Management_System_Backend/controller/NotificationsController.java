@@ -37,14 +37,14 @@ public class NotificationsController {
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
     public ResponseEntity<PaginatedResponseWithUnreadCount> getNotifications(
             @RequestParam(defaultValue = "all") String tab,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int limit,
             Authentication authentication) {
 
         User currentUser = userRepository.findById(Long.parseLong(authentication.getName()))
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
-        Pageable pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
+        Pageable pageable = PageRequest.of(page - 1, limit, Sort.by("createdAt").descending());
         
         Page<NotificationQueue> notificationsPage;
         
@@ -78,14 +78,14 @@ public class NotificationsController {
                 .filter(n -> n.getChannel() == NotificationQueue.Channel.IN_APP)
                 .count();
 
-        PageResponse pageResponse = new PageResponse(page, size, (int) notificationsPage.getTotalElements(), notificationsPage.getTotalPages());
-        
+        PageResponse pageResponse = new PageResponse(page, limit, notificationsPage.getTotalElements(), notificationsPage.getTotalPages());
+
         PaginatedResponseWithUnreadCount response = new PaginatedResponseWithUnreadCount();
         response.setSuccess(true);
         response.setData(notifications);
         response.setPage(pageResponse.getPage());
-        response.setLimit(pageResponse.getSize());
-        response.setTotalCount((int) pageResponse.getTotalElements());
+        response.setLimit(pageResponse.getLimit());
+        response.setTotalCount((int) pageResponse.getTotalCount());
         response.setTotalPages(pageResponse.getTotalPages());
         response.setUnreadCount((int) unreadCount);
 

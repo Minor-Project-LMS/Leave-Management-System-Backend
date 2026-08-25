@@ -39,10 +39,10 @@ public class HolidaysController {
             @RequestParam(required = false) Integer month,
             @RequestParam(required = false) Integer departmentId,
             @RequestParam(required = false) String type,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
-        
-        Pageable pageable = PageRequest.of(page, size);
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int limit) {
+
+        Pageable pageable = PageRequest.of(page - 1, limit);
         Page<Holiday> holidays;
 
         if (year != null && month != null) {
@@ -62,8 +62,8 @@ public class HolidaysController {
                 .collect(Collectors.toList());
 
         PageResponse pageResponse = new PageResponse(
-                holidays.getNumber(),
-                holidays.getSize(),
+                page,
+                limit,
                 holidays.getTotalElements(),
                 holidays.getTotalPages()
         );

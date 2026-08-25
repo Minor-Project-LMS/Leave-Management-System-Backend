@@ -38,11 +38,11 @@ public class EmployeesController {
             @RequestParam(required = false) Integer departmentId,
             @RequestParam(required = false) String designation,
             @RequestParam(required = false) User.EmploymentStatus status,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int limit,
             Authentication authentication) {
 
-        Pageable pageable = PageRequest.of(page, size, Sort.by("name").ascending());
+        Pageable pageable = PageRequest.of(page - 1, limit, Sort.by("name").ascending());
         Page<User> employees;
 
         // Apply filters based on parameters
@@ -67,8 +67,8 @@ public class EmployeesController {
                 .toList();
 
         PageResponse pageResponse = new PageResponse(
-                employees.getNumber(),
-                employees.getSize(),
+                page,
+                limit,
                 employees.getTotalElements(),
                 employees.getTotalPages()
         );

@@ -70,11 +70,11 @@ public class LeaveLedgerController {
             @RequestParam(required = false) Long userId,
             @RequestParam(required = false) Integer fiscalYear,
             @RequestParam(required = false) Integer categoryId,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int limit,
             @RequestParam(required = false) String sort,
             Authentication authentication) {
-        
+
         // If userId not provided, use current user
         if (userId == null) {
             String email = authentication.getName();
@@ -88,7 +88,7 @@ public class LeaveLedgerController {
             fiscalYear = LocalDate.now().getYear();
         }
 
-        Pageable pageable = PageRequest.of(page, size, 
+        Pageable pageable = PageRequest.of(page - 1, limit,
             sort != null ? Sort.by(sort) : Sort.by("transactionDate").descending());
 
         Page<LeaveLedger> transactions = leaveLedgerRepository.findWithFilters(
@@ -99,8 +99,8 @@ public class LeaveLedgerController {
                 .collect(Collectors.toList());
 
         PageResponse pageResponse = new PageResponse(
-            transactions.getNumber(),
-            transactions.getSize(),
+            page,
+            limit,
             transactions.getTotalElements(),
             transactions.getTotalPages()
         );

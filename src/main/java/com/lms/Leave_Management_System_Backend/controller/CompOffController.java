@@ -75,11 +75,11 @@ public class CompOffController {
     public ResponseEntity<PaginatedResponse<CompOffRequestDto>> listCompOffRequests(
             @RequestParam(required = false) String status,
             @RequestParam(required = false) Long userId,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int limit,
             @RequestParam(required = false) String sort,
             Authentication authentication) {
-        
+
         // If userId not provided, use current user for employees
         if (userId == null) {
             String email = authentication.getName();
@@ -88,7 +88,7 @@ public class CompOffController {
             userId = currentUser.getId();
         }
 
-        Pageable pageable = PageRequest.of(page, size, 
+        Pageable pageable = PageRequest.of(page - 1, limit,
             sort != null ? Sort.by(sort) : Sort.by("createdAt").descending());
 
         Page<CompOffRequest> requests;
@@ -113,8 +113,8 @@ public class CompOffController {
                 .collect(Collectors.toList());
 
         PageResponse pageResponse = new PageResponse(
-            requests.getNumber(),
-            requests.getSize(),
+            page,
+            limit,
             requests.getTotalElements(),
             requests.getTotalPages()
         );
