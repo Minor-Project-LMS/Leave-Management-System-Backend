@@ -1,5 +1,6 @@
 package com.lms.Leave_Management_System_Backend.config;
 
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.HealthIndicator;
 import org.springframework.context.annotation.Bean;
@@ -10,7 +11,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 public class ActuatorConfig {
 
     @Bean
-    public HealthIndicator redisHealthIndicator(RedisTemplate<String, String> redisTemplate) {
+    public HealthIndicator redisHealthIndicator(@Qualifier("stringRedisTemplate") RedisTemplate<String, String> redisTemplate) {
         return () -> {
             try {
                 redisTemplate.getConnectionFactory().getConnection().ping();

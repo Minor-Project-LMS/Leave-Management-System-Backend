@@ -34,10 +34,15 @@ public class LoggingAspect {
         long startTime = System.currentTimeMillis();
         
         try {
+            // Don't log arguments for sensitive endpoints to avoid exposing passwords, OTPs, tokens
+            String logArguments = shouldLogArguments(request.getRequestURI()) 
+                ? Arrays.toString(joinPoint.getArgs()) 
+                : "[REDACTED - Sensitive Data]";
+            
             log.info("Request started: {} {} - Arguments: {}", 
                     request.getMethod(), 
                     request.getRequestURI(),
-                    Arrays.toString(joinPoint.getArgs()));
+                    logArguments);
 
             Object result = joinPoint.proceed();
 
@@ -67,5 +72,13 @@ public class LoggingAspect {
             return request.getRemoteAddr();
         }
         return xfHeader.split(",")[0];
+    }
+
+    private boolean shouldLogArguments(String requestURI) {
+        // Don't log arguments for sensitive endpoints containing passwords, OTPs, or tokens
+        return !requestURI.contains("/auth/login") && 
+               !requestURI.contains("/auth/forgot-password") && 
+               !requestURI.contains("/auth/reset-password") &&
+               !requestURI.contains("/users/me/password");
     }
 }

@@ -2,9 +2,11 @@ package com.lms.Leave_Management_System_Backend.controller;
 
 import com.lms.Leave_Management_System_Backend.dto.*;
 import com.lms.Leave_Management_System_Backend.exception.ResourceNotFoundException;
+import com.lms.Leave_Management_System_Backend.model.LeaveApproval;
 import com.lms.Leave_Management_System_Backend.model.LeaveRequest;
 import com.lms.Leave_Management_System_Backend.model.User;
 import com.lms.Leave_Management_System_Backend.repository.ApprovalDelegationRepository;
+import com.lms.Leave_Management_System_Backend.repository.LeaveApprovalRepository;
 import com.lms.Leave_Management_System_Backend.repository.LeaveRequestRepository;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
@@ -27,11 +29,13 @@ public class ApprovalsController {
     private final LeaveRequestRepository leaveRequestRepository;
     private final UserRepository userRepository;
     private final ApprovalDelegationRepository delegationRepository;
+    private final LeaveApprovalRepository leaveApprovalRepository;
 
-    public ApprovalsController(LeaveRequestRepository leaveRequestRepository, UserRepository userRepository, ApprovalDelegationRepository delegationRepository) {
+    public ApprovalsController(LeaveRequestRepository leaveRequestRepository, UserRepository userRepository, ApprovalDelegationRepository delegationRepository, LeaveApprovalRepository leaveApprovalRepository) {
         this.leaveRequestRepository = leaveRequestRepository;
         this.userRepository = userRepository;
         this.delegationRepository = delegationRepository;
+        this.leaveApprovalRepository = leaveApprovalRepository;
     }
 
     @GetMapping("/inbox")
@@ -51,56 +55,79 @@ public class ApprovalsController {
         // Contract uses 1-based page numbers, Spring uses 0-based
         Pageable pageable = PageRequest.of(page - 1, limit, Sort.by(direction, "appliedAt"));
         
-        Page<LeaveRequest> leaveRequests;
+        // Get all requests where user is the current approver OR has made an approval decision
+        List<LeaveApproval> userApprovals = leaveApprovalRepository.findByApproverId(currentUser.getId());
+        List<Long> requestIdsWithUserAction = userApprovals.stream()
+                .map(approval -> approval.getRequest().getId())
+                .distinct()
+                .collect(Collectors.toList());
         
-        // Check if user is currently acting as a delegate
-        LocalDate today = LocalDate.now();
+        // Get requests where user is current approver
+        Page<LeaveRequest> currentApproverRequests = leaveRequestRepository.findByCurrentApproverId(currentUser.getId(), Pageable.unpaged());
+        List<Long> currentApproverRequestIds = currentApproverRequests.getContent().stream()
+                .map(LeaveRequest::getId)
+                .collect(Collectors.toList());
         
-        // Get requests where user is the designated approver or active delegate
-        // For now, get requests where user is the designated approver
-        // This can be extended to include requests where user is the active delegate
+        // Combine both sets - all requests the manager should see
+        List<Long> allAccessibleRequestIds = requestIdsWithUserAction;
+        allAccessibleRequestIds.addAll(currentApproverRequestIds);
+        allAccessibleRequestIds = allAccessibleRequestIds.stream().distinct().collect(Collectors.toList());
         
-        // Filter by current approver with status support
-        if (status.equals("ALL")) {
-            leaveRequests = leaveRequestRepository.findByCurrentApproverId(currentUser.getId(), pageable);
-        } else if (status.equals("PENDING")) {
-            // Include both PENDING_L1 and PENDING_L2 for managers and HR
-            // Get all requests for current approver, then filter in memory
-            Page<LeaveRequest> allRequests = leaveRequestRepository.findByCurrentApproverId(currentUser.getId(), pageable);
-            leaveRequests = allRequests; // Keep as Page, will filter content later
-        } else if (status.equals("APPROVED")) {
-            leaveRequests = leaveRequestRepository.findByCurrentApproverIdAndStatus(currentUser.getId(), LeaveRequest.RequestStatus.APPROVED, pageable);
-        } else if (status.equals("REJECTED")) {
-            leaveRequests = leaveRequestRepository.findByCurrentApproverIdAndStatus(currentUser.getId(), LeaveRequest.RequestStatus.REJECTED, pageable);
-        } else {
-            leaveRequests = Page.empty();
-        }
-
-        List<LeaveRequestDto> dtos = leaveRequests.getContent().stream()
+        // Get all accessible requests using custom query with entity graph
+        List<LeaveRequest> allAccessibleRequests = leaveRequestRepository.findByIds(allAccessibleRequestIds);
+        
+        // Filter by status for the current page
+        List<LeaveRequest> filteredRequests = allAccessibleRequests.stream()
                 .filter(lr -> {
-                    if (status.equals("PENDING")) {
+                    if (status.equals("ALL")) {
+                        return true;
+                    } else if (status.equals("PENDING")) {
                         return lr.getStatus() == LeaveRequest.RequestStatus.PENDING_L1 || 
                                lr.getStatus() == LeaveRequest.RequestStatus.PENDING_L2;
+                    } else if (status.equals("APPROVED")) {
+                        return lr.getStatus() == LeaveRequest.RequestStatus.APPROVED;
+                    } else if (status.equals("REJECTED")) {
+                        return lr.getStatus() == LeaveRequest.RequestStatus.REJECTED;
                     }
-                    return true;
+                    return false;
                 })
+                .sorted((a, b) -> {
+                    if (direction == Sort.Direction.DESC) {
+                        return b.getAppliedAt().compareTo(a.getAppliedAt());
+                    } else {
+                        return a.getAppliedAt().compareTo(b.getAppliedAt());
+                    }
+                })
+                .collect(Collectors.toList());
+        
+        // Apply pagination manually since we're working with a list
+        int startIndex = (page - 1) * limit;
+        int endIndex = Math.min(startIndex + limit, filteredRequests.size());
+        
+        List<LeaveRequest> paginatedRequests;
+        if (startIndex >= filteredRequests.size()) {
+            paginatedRequests = List.of(); // Return empty list if page is out of bounds
+        } else {
+            paginatedRequests = filteredRequests.subList(startIndex, endIndex);
+        }
+        
+        List<LeaveRequestDto> dtos = paginatedRequests.stream()
                 .map(this::toLeaveRequestDto)
                 .collect(Collectors.toList());
 
-        // Calculate counts for all tabs (including PENDING_L2)
-        Page<LeaveRequest> allRequests = leaveRequestRepository.findByCurrentApproverId(currentUser.getId(), Pageable.unpaged());
-        long allCount = allRequests.getTotalElements();
+        // Calculate counts for all tabs
+        long allCount = allAccessibleRequests.size();
         
-        long pendingCount = allRequests.getContent().stream()
+        long pendingCount = allAccessibleRequests.stream()
             .filter(lr -> lr.getStatus() == LeaveRequest.RequestStatus.PENDING_L1 || 
                           lr.getStatus() == LeaveRequest.RequestStatus.PENDING_L2)
             .count();
         
-        long approvedCount = allRequests.getContent().stream()
+        long approvedCount = allAccessibleRequests.stream()
             .filter(lr -> lr.getStatus() == LeaveRequest.RequestStatus.APPROVED)
             .count();
         
-        long rejectedCount = allRequests.getContent().stream()
+        long rejectedCount = allAccessibleRequests.stream()
             .filter(lr -> lr.getStatus() == LeaveRequest.RequestStatus.REJECTED)
             .count();
 
@@ -108,11 +135,13 @@ public class ApprovalsController {
             (int) allCount, (int) pendingCount, (int) approvedCount, (int) rejectedCount
         );
 
+        int totalPages = (int) Math.ceil((double) filteredRequests.size() / limit);
+
         ApprovalInboxResponse response = new ApprovalInboxResponse(
             page, // Return 1-based page number as per contract
             limit,
-            leaveRequests.getTotalElements(),
-            leaveRequests.getTotalPages(),
+            filteredRequests.size(),
+            totalPages,
             counts,
             dtos
         );

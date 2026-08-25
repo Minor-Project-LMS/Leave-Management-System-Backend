@@ -42,12 +42,12 @@ public class EmailService {
             message.setSubject(subject);
             message.setText(body);
             if (fromAddress != null && !fromAddress.isBlank()) {
-                message.setFrom(fromAddress);
+                message.setFrom("lms-team@mailnator.com");
             }
             mailSender.send(message);
             log.info("Email sent successfully to {}", to);
         } catch (Exception ex) {
-            log.error("Failed to send email to {}. Email details - Subject: {}, Body: {}", to, subject, body, ex);
+            log.error("Failed to send email to {}. Subject: {}", to, subject, ex);
         }
     }
 }

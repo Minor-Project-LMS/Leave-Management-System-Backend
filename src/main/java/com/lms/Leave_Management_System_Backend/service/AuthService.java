@@ -11,31 +11,27 @@ import com.lms.Leave_Management_System_Backend.repository.RoleRepository;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 
-import java.time.Instant;
-import java.util.Map;
+import java.time.Duration;
 import java.util.Random;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class AuthService {
 
     private static final Logger log = LoggerFactory.getLogger(AuthService.class);
+    private static final String OTP_PREFIX = "otp:";
+    private static final Duration OTP_EXPIRY = Duration.ofMinutes(5);
 
     private final EmailService emailService;
     private final UserRepository userRepository;
     private final DepartmentRepository departmentRepository;
     private final RoleRepository roleRepository;
     private final BCryptPasswordEncoder passwordEncoder;
-
-    /*
-     * OTPs are temporarily stored in memory.
-     * User information and passwords are stored in PostgreSQL.
-     */
-    private final Map<String, OtpEntry> otpStore =
-            new ConcurrentHashMap<>();
+    private final RedisTemplate<String, String> otpRedisTemplate;
 
     private final Random random = new Random();
 
@@ -43,27 +39,15 @@ public class AuthService {
             EmailService emailService,
             UserRepository userRepository,
             DepartmentRepository departmentRepository,
-            RoleRepository roleRepository) {
+            RoleRepository roleRepository,
+            @Qualifier("otpRedisTemplate") RedisTemplate<String, String> otpRedisTemplate) {
 
         this.emailService = emailService;
         this.userRepository = userRepository;
         this.departmentRepository = departmentRepository;
         this.roleRepository = roleRepository;
+        this.otpRedisTemplate = otpRedisTemplate;
         this.passwordEncoder = new BCryptPasswordEncoder();
-    }
-
-    /**
-     * Represents an OTP and its expiry time.
-     */
-    private static class OtpEntry {
-
-        final String otp;
-        final Instant expiresAt;
-
-        OtpEntry(String otp, Instant expiresAt) {
-            this.otp = otp;
-            this.expiresAt = expiresAt;
-        }
     }
 
     // =========================================================
@@ -144,6 +128,7 @@ public class AuthService {
      * Generate a 6-digit OTP for password reset.
      *
      * User is checked against PostgreSQL.
+     * OTP is stored in Redis with 5-minute expiration.
      */
     public boolean generateOtpForEmail(String email) {
 
@@ -168,14 +153,9 @@ public class AuthService {
                 random.nextInt(1_000_000)
         );
 
-        // OTP valid for 5 minutes
-        Instant expiry =
-                Instant.now().plusSeconds(5 * 60);
-
-        otpStore.put(
-                normalizedEmail.toLowerCase(),
-                new OtpEntry(otp, expiry)
-        );
+        // Store OTP in Redis with 5-minute expiration
+        String redisKey = OTP_PREFIX + normalizedEmail.toLowerCase();
+        otpRedisTemplate.opsForValue().set(redisKey, otp, OTP_EXPIRY);
 
         try {
 
@@ -186,8 +166,8 @@ public class AuthService {
 
         } catch (Exception ex) {
 
-            // Log OTP for development/debugging purposes
-            log.warn("Failed to send OTP email to {}. OTP: {} (valid 5 minutes)", normalizedEmail, otp, ex);
+            // Log email failure without exposing sensitive OTP data
+            log.warn("Failed to send OTP email to {}", normalizedEmail, ex);
         }
 
         return true;
@@ -199,6 +179,7 @@ public class AuthService {
 
     /**
      * Verify OTP entered by the user.
+     * OTP is retrieved from Redis.
      */
     public boolean verifyOtp(
             String email,
@@ -215,27 +196,19 @@ public class AuthService {
         String normalizedEmail =
                 email.trim().toLowerCase();
 
-        OtpEntry entry =
-                otpStore.get(normalizedEmail);
+        String redisKey = OTP_PREFIX + normalizedEmail;
+        String storedOtp = otpRedisTemplate.opsForValue().get(redisKey);
 
-        if (entry == null) {
-            return false;
-        }
-
-        // Check expiry
-        if (Instant.now().isAfter(entry.expiresAt)) {
-
-            otpStore.remove(normalizedEmail);
-
+        if (storedOtp == null) {
             return false;
         }
 
         // Verify OTP
-        boolean valid =
-                entry.otp.equals(otp.trim());
+        boolean valid = storedOtp.equals(otp.trim());
 
         if (valid) {
-            otpStore.remove(normalizedEmail);
+            // Remove OTP from Redis after successful verification
+            otpRedisTemplate.delete(redisKey);
         }
 
         return valid;

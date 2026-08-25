@@ -49,4 +49,8 @@ public interface LeaveRequestRepository extends JpaRepository<LeaveRequest, Long
     @EntityGraph(attributePaths = {"user", "category", "currentApprover", "handoverTo"})
     @Query("SELECT lr FROM LeaveRequest lr WHERE lr.user.id = :userId OR lr.currentApprover.id = :userId")
     Page<LeaveRequest> findAccessibleByUserId(@Param("userId") Long userId, Pageable pageable);
+
+    @EntityGraph(attributePaths = {"user", "category", "currentApprover", "handoverTo"})
+    @Query("SELECT lr FROM LeaveRequest lr WHERE lr.id IN :requestIds")
+    List<LeaveRequest> findByIds(@Param("requestIds") List<Long> requestIds);
 }

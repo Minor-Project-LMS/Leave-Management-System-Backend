@@ -9,6 +9,7 @@ import com.lms.Leave_Management_System_Backend.service.RefreshTokenService;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -106,18 +107,22 @@ public class AuthController {
 
     @PostMapping("/forgot-password")
     public ResponseEntity<?> forgotPassword(
-            @RequestBody ForgotPasswordRequest req) {
+            @Valid @RequestBody ForgotPasswordRequest req) {
 
-        boolean ok =
-                authService.generateOtpForEmail(req.getEmail());
+        authService.generateOtpForEmail(req.getEmail());
 
-        // Always return 202 regardless of whether email exists (account enumeration prevention)
-        return ResponseEntity.status(HttpStatus.ACCEPTED).build();
+        // Always return 200 regardless of whether email exists (account enumeration prevention)
+        return ResponseEntity.ok(
+            new ApiResponse<>(
+                true,
+                "If an account exists for this email, a reset link has been sent."
+            )
+        );
     }
 
     @PostMapping("/reset-password")
     public ResponseEntity<?> resetPassword(
-            @RequestBody ResetPasswordRequest req) {
+            @Valid @RequestBody ResetPasswordRequest req) {
 
         boolean valid =
                 authService.verifyOtp(
@@ -128,18 +133,34 @@ public class AuthController {
         if (!valid) {
             return ResponseEntity
                     .badRequest()
-                    .body(new ApiResponse<>(
-                            false,
-                            "Invalid or expired OTP"
+                    .body(new ApiErrorResponse(
+                            "INVALID_OTP",
+                            "Invalid or expired OTP",
+                            "/auth/reset-password"
                     ));
         }
 
-        authService.resetPassword(
+        boolean resetSuccess = authService.resetPassword(
                 req.getEmail(),
                 req.getNewPassword()
         );
 
-        return ResponseEntity.noContent().build();
+        if (!resetSuccess) {
+            return ResponseEntity
+                    .badRequest()
+                    .body(new ApiErrorResponse(
+                            "RESET_FAILED",
+                            "Password reset failed",
+                            "/auth/reset-password"
+                    ));
+        }
+
+        return ResponseEntity.ok(
+            new ApiResponse<>(
+                true,
+                "Password reset successful"
+            )
+        );
     }
 
     @PostMapping("/refresh")
