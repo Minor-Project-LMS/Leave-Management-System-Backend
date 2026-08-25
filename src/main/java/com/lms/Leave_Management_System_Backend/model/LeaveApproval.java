@@ -39,9 +39,11 @@ public class LeaveApproval {
     @Column(name = "comments")
     private String comments;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "acting_as_delegate_for")
-    private User actingAsDelegateFor;
+    // Temporarily make this field optional since database column may not exist
+    // Uncomment when database is migrated to include acting_as_delegate_for column
+    // @ManyToOne(fetch = FetchType.LAZY)
+    // @JoinColumn(name = "acting_as_delegate_for")
+    // private User actingAsDelegateFor;
 
     public enum Decision {
         APPROVED, REJECTED
@@ -106,11 +108,12 @@ public class LeaveApproval {
         this.comments = comments;
     }
 
-    public User getActingAsDelegateFor() {
-        return actingAsDelegateFor;
-    }
+    // Temporarily commented out until database migration
+    // public User getActingAsDelegateFor() {
+    //     return actingAsDelegateFor;
+    // }
 
-    public void setActingAsDelegateFor(User actingAsDelegateFor) {
-        this.actingAsDelegateFor = actingAsDelegateFor;
-    }
+    // public void setActingAsDelegateFor(User actingAsDelegateFor) {
+    //     this.actingAsDelegateFor = actingAsDelegateFor;
+    // }
 }

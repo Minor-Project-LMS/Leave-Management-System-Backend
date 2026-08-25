@@ -32,8 +32,8 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 @RestController
@@ -46,6 +46,9 @@ public class LeaveRequestsController {
     private final LeaveApprovalRepository leaveApprovalRepository;
     private final ApprovalDelegationRepository delegationRepository;
     private final LeaveLedgerRepository leaveLedgerRepository;
+    
+    // In-memory comment storage (comment table would be better for production)
+    private static final Map<Long, List<CommentDto>> commentStorage = new ConcurrentHashMap<>();
 
     public LeaveRequestsController(
             LeaveRequestRepository leaveRequestRepository,
@@ -124,7 +127,7 @@ public class LeaveRequestsController {
         LeaveRequest saved = leaveRequestRepository.save(leaveRequest);
         LeaveRequestDto dto = toLeaveRequestDto(saved);
 
-        return ResponseEntity.status(201).body(new ApiResponse<>(true, dto));
+        return ResponseEntity.status(201).body(new ApiResponse<LeaveRequestDto>(true, dto));
     }
 
     /**
@@ -250,7 +253,7 @@ public class LeaveRequestsController {
         }
 
         LeaveRequestDto dto = toLeaveRequestDto(leaveRequest);
-        return ResponseEntity.ok(new ApiResponse<>(true, dto));
+        return ResponseEntity.ok(new ApiResponse<LeaveRequestDto>(true, dto));
     }
 
     @PatchMapping("/{requestId}")
@@ -303,7 +306,7 @@ public class LeaveRequestsController {
         LeaveRequest saved = leaveRequestRepository.save(leaveRequest);
         LeaveRequestDto dto = toLeaveRequestDto(saved);
 
-        return ResponseEntity.ok(new ApiResponse<>(true, dto));
+        return ResponseEntity.ok(new ApiResponse<LeaveRequestDto>(true, dto));
     }
 
     @PostMapping("/{requestId}/submit")
@@ -380,7 +383,7 @@ public class LeaveRequestsController {
         LeaveRequest saved = leaveRequestRepository.save(leaveRequest);
         LeaveRequestDto dto = toLeaveRequestDto(saved);
         
-        return ResponseEntity.ok(new ApiResponse<>(true, dto));
+        return ResponseEntity.ok(new ApiResponse<LeaveRequestDto>(true, dto));
     }
 
     @PatchMapping("/{requestId}/decisions")
@@ -388,7 +391,7 @@ public class LeaveRequestsController {
     @Transactional
     public ResponseEntity<ApiResponse<LeaveRequestDto>> recordDecision(
             @PathVariable Long requestId,
-            @RequestBody LeaveDecisionRequest decisionRequest,
+            @Valid @RequestBody LeaveDecisionRequest decisionRequest,
             Authentication authentication) {
 
         LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
@@ -463,9 +466,10 @@ public class LeaveRequestsController {
             LeaveApproval.Decision.APPROVED : LeaveApproval.Decision.REJECTED);
         approval.setDecidedAt(LocalDateTime.now());
         approval.setComments(decisionRequest.getComments());
-        if (isDelegatedApprover) {
-            approval.setActingAsDelegateFor(currentApprover);
-        }
+        // Note: actingAsDelegateFor is temporarily disabled pending database migration
+        // if (isDelegatedApprover) {
+        //     approval.setActingAsDelegateFor(currentApprover);
+        // }
         leaveApprovalRepository.save(approval);
 
         // Update the request status
@@ -510,7 +514,7 @@ public class LeaveRequestsController {
         LeaveRequest saved = leaveRequestRepository.save(leaveRequest);
         LeaveRequestDto dto = toLeaveRequestDto(saved);
 
-        return ResponseEntity.ok(new ApiResponse<>(true, dto));
+        return ResponseEntity.ok(new ApiResponse<LeaveRequestDto>(true, dto));
     }
 
     @PostMapping("/{requestId}/withdraw")
@@ -546,7 +550,7 @@ public class LeaveRequestsController {
         LeaveRequest saved = leaveRequestRepository.save(leaveRequest);
         LeaveRequestDto dto = toLeaveRequestDto(saved);
 
-        return ResponseEntity.ok(new ApiResponse<>(true, dto));
+        return ResponseEntity.ok(new ApiResponse<LeaveRequestDto>(true, dto));
     }
 
     @GetMapping("/{requestId}/approvals")
@@ -584,8 +588,7 @@ public class LeaveRequestsController {
         dto.setRequestId(approval.getRequest().getId().intValue());
         dto.setApproverId(approval.getApprover().getId().intValue());
         dto.setApproverName(approval.getApprover().getName());
-        dto.setActingAsDelegateFor(approval.getActingAsDelegateFor() != null ? 
-            approval.getActingAsDelegateFor().getId().intValue() : null);
+        dto.setActingAsDelegateFor(null); // Temporarily null pending database migration
         dto.setLevel(approval.getLevel().intValue());
         dto.setDecision(approval.getDecision().name());
         dto.setDecidedAt(approval.getDecidedAt());
@@ -612,9 +615,9 @@ public class LeaveRequestsController {
             throw new SecurityException("You can only view your own leave request comments");
         }
 
-        // Simplified implementation - would query actual comments
-        List<CommentDto> comments = List.of();
-
+        // Return comments from in-memory storage
+        List<CommentDto> comments = commentStorage.getOrDefault(requestId, new ArrayList<>());
+        
         return ResponseEntity.ok(comments);
     }
 
@@ -638,14 +641,17 @@ public class LeaveRequestsController {
             throw new SecurityException("You can only comment on your own leave requests");
         }
 
-        // Simplified implementation - would save to database
+        // Create and store comment
         CommentDto comment = new CommentDto();
-        comment.setId((int) System.currentTimeMillis());
+        comment.setId(commentStorage.getOrDefault(requestId, new ArrayList<>()).size() + 1);
         comment.setRequestId(requestId);
         comment.setAuthorId(currentUser.getId());
         comment.setAuthorName(currentUser.getName());
         comment.setMessage(commentRequest.getMessage());
         comment.setCreatedAt(LocalDateTime.now());
+
+        // Store in in-memory storage
+        commentStorage.computeIfAbsent(requestId, k -> new ArrayList<>()).add(comment);
 
         return ResponseEntity.status(201).body(comment);
     }
@@ -735,6 +741,31 @@ public class LeaveRequestsController {
 
         // Simplified implementation - would generate actual PDF
         // In real implementation, return PDF file stream
+        return ResponseEntity.ok().build();
+    }
+
+    @GetMapping("/{requestId}/attachments/{attachmentId}")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    public ResponseEntity<?> downloadAttachment(
+            @PathVariable Long requestId,
+            @PathVariable Long attachmentId,
+            Authentication authentication) {
+        
+        LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
+                .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
+
+        // Check access permissions
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") && 
+            !leaveRequest.getUser().getId().equals(currentUser.getId())) {
+            throw new SecurityException("You can only download your own leave request attachments");
+        }
+
+        // Simplified implementation - would return actual file stream
+        // In real implementation, return file content with proper headers
         return ResponseEntity.ok().build();
     }
 

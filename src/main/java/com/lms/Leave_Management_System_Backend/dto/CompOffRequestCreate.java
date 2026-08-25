@@ -1,14 +1,20 @@
 package com.lms.Leave_Management_System_Backend.dto;
 
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
-import java.util.List;
 
 public class CompOffRequestCreate {
+    @NotNull(message = "workedOn is required")
     private LocalDate workedOn;
+    
+    @NotBlank(message = "reason is required")
+    @Size(max = 2000, message = "reason must be less than 2000 characters")
     private String reason;
+    
+    @NotNull(message = "hoursWorked is required")
     private Double hoursWorked;
-    private Double daysCredited;
-    private List<Integer> attachmentIds;
 
     // Constructors
     public CompOffRequestCreate() {}
@@ -36,21 +42,5 @@ public class CompOffRequestCreate {
 
     public void setHoursWorked(Double hoursWorked) {
         this.hoursWorked = hoursWorked;
-    }
-
-    public Double getDaysCredited() {
-        return daysCredited;
-    }
-
-    public void setDaysCredited(Double daysCredited) {
-        this.daysCredited = daysCredited;
-    }
-
-    public List<Integer> getAttachmentIds() {
-        return attachmentIds;
-    }
-
-    public void setAttachmentIds(List<Integer> attachmentIds) {
-        this.attachmentIds = attachmentIds;
     }
 }

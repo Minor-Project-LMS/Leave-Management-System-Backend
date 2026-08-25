@@ -1,36 +1,56 @@
 package com.lms.Leave_Management_System_Backend.dto;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 public class CompOffRequestDto {
-    private Integer compId;
-    private UserDto employee;
+    private Integer id;
+    private String displayId;
+    private Integer userId;
+    private String employeeName;
     private LocalDate workedOn;
     private String reason;
     private Double daysCredited;
     private LocalDate expiryDate;
     private String status;
-    private UserDto approver;
-    private LocalDate createdAt;
+    private Integer approverId;
+    private String approverName;
+    private LocalDateTime createdAt;
 
     // Constructors
     public CompOffRequestDto() {}
 
     // Getters and Setters
-    public Integer getCompId() {
-        return compId;
+    public Integer getId() {
+        return id;
     }
 
-    public void setCompId(Integer compId) {
-        this.compId = compId;
+    public void setId(Integer id) {
+        this.id = id;
     }
 
-    public UserDto getEmployee() {
-        return employee;
+    public String getDisplayId() {
+        return displayId;
     }
 
-    public void setEmployee(UserDto employee) {
-        this.employee = employee;
+    public void setDisplayId(String displayId) {
+        this.displayId = displayId;
+    }
+
+    public Integer getUserId() {
+        return userId;
+    }
+
+    public void setUserId(Integer userId) {
+        this.userId = userId;
+    }
+
+    public String getEmployeeName() {
+        return employeeName;
+    }
+
+    public void setEmployeeName(String employeeName) {
+        this.employeeName = employeeName;
     }
 
     public LocalDate getWorkedOn() {
@@ -73,19 +93,27 @@ public class CompOffRequestDto {
         this.status = status;
     }
 
-    public UserDto getApprover() {
-        return approver;
+    public Integer getApproverId() {
+        return approverId;
     }
 
-    public void setApprover(UserDto approver) {
-        this.approver = approver;
+    public void setApproverId(Integer approverId) {
+        this.approverId = approverId;
     }
 
-    public LocalDate getCreatedAt() {
+    public String getApproverName() {
+        return approverName;
+    }
+
+    public void setApproverName(String approverName) {
+        this.approverName = approverName;
+    }
+
+    public LocalDateTime getCreatedAt() {
         return createdAt;
     }
 
-    public void setCreatedAt(LocalDate createdAt) {
+    public void setCreatedAt(LocalDateTime createdAt) {
         this.createdAt = createdAt;
     }
 }
