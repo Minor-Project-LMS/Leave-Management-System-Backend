@@ -109,14 +109,24 @@ public class AuthController {
     public ResponseEntity<?> forgotPassword(
             @Valid @RequestBody ForgotPasswordRequest req) {
 
-        authService.generateOtpForEmail(req.getEmail());
+        boolean otpGenerated = authService.generateOtpForEmail(req.getEmail());
 
-        // Always return 200 regardless of whether email exists (account enumeration prevention)
+        // Check if user exists. If not, return 404 NOT_FOUND
+        if (!otpGenerated) {
+            return ResponseEntity
+                    .status(HttpStatus.NOT_FOUND)
+                    .body(new ApiErrorResponse(
+                            "USER_NOT_FOUND",
+                            "Email address does not exist",
+                            "/auth/forgot-password"
+                    ));
+        }
+
         return ResponseEntity.ok(
-            new ApiResponse<>(
-                true,
-                "If an account exists for this email, a reset link has been sent."
-            )
+                new ApiResponse<>(
+                        true,
+                        "Password reset link has been sent to your email."
+                )
         );
     }
 
@@ -156,10 +166,10 @@ public class AuthController {
         }
 
         return ResponseEntity.ok(
-            new ApiResponse<>(
-                true,
-                "Password reset successful"
-            )
+                new ApiResponse<>(
+                        true,
+                        "Password reset successful"
+                )
         );
     }
 
@@ -294,11 +304,11 @@ public class AuthController {
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             String accessToken = authHeader.substring(7);
             log.info("Access token found in Authorization header");
-            
+
             if (jwtBlacklistService != null) {
                 long remainingTime = jwtUtil.getRemainingExpirationTime(accessToken);
                 log.info("Token remaining time: {} seconds", remainingTime);
-                
+
                 if (remainingTime > 0) {
                     jwtBlacklistService.blacklistToken(accessToken, remainingTime);
                     log.info("Access token blacklisted successfully");
