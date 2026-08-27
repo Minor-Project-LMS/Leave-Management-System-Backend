@@ -1,0 +1,25 @@
+# Build artifacts
+target
+*.log
+
+# Local files
+uploads
+.env
+.env.example
+
+# Documentation
+README.md
+AGENTS.md
+.docs
+
+# IDE files
+.idea
+
+# Other Docker files
+Dockerfile
+docker-compose.yml
+
+# Maven wrapper (not needed for Vercel)
+mvnw
+mvnw.cmd
+.mvn

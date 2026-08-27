@@ -1,0 +1,13 @@
+package com.lms.Leave_Management_System_Backend.dto;
+
+public class WithdrawRequest {
+    private String reason;
+
+    public String getReason() {
+        return reason;
+    }
+
+    public void setReason(String reason) {
+        this.reason = reason;
+    }
+}
