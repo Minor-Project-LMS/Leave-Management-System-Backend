@@ -144,6 +144,7 @@ public class AuthService {
                 .orElse(null);
 
         if (user == null) {
+            log.warn("Forgot password requested for non-existent email: {}", normalizedEmail);
             return false;
         }
 
@@ -332,8 +333,8 @@ public class AuthService {
         }
 
         // Check if employee code already exists (if provided)
-        if (request.getEmployeeCode() != null && 
-            userRepository.findByEmployeeCode(request.getEmployeeCode()).isPresent()) {
+        if (request.getEmployeeCode() != null &&
+                userRepository.findByEmployeeCode(request.getEmployeeCode()).isPresent()) {
             throw new ConflictException("Employee code already in use");
         }
 
