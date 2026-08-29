@@ -68,7 +68,7 @@ public class LeaveLedgerController {
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
     public ResponseEntity<PaginatedResponse<LedgerTransactionDto>> getTransactionHistory(
             @RequestParam(required = false) Long userId,
-            @RequestParam(required = false) Integer fiscalYear,
+            @RequestParam(value = "year", required = false) Integer fiscalYear,
             @RequestParam(required = false) Integer categoryId,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int limit,

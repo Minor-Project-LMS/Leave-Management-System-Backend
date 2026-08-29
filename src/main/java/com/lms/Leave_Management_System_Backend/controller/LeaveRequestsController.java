@@ -67,6 +67,7 @@ public class LeaveRequestsController {
 
     @PostMapping
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
     public ResponseEntity<ApiResponse<LeaveRequestDto>> createLeaveRequest(
             @Valid @RequestBody LeaveRequestCreate request,
             Authentication authentication) {
@@ -155,6 +156,7 @@ public class LeaveRequestsController {
 
     @GetMapping
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
     public ResponseEntity<PaginatedResponse<LeaveRequestDto>> listLeaveRequests(
             @RequestParam(required = false) String status,
             @RequestParam(required = false) Integer categoryId,
@@ -235,6 +237,7 @@ public class LeaveRequestsController {
 
     @GetMapping("/{requestId}")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
     public ResponseEntity<ApiResponse<LeaveRequestDto>> getLeaveRequest(
             @PathVariable Long requestId,
             Authentication authentication) {
@@ -258,6 +261,7 @@ public class LeaveRequestsController {
 
     @PatchMapping("/{requestId}")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
     public ResponseEntity<ApiResponse<LeaveRequestDto>> updateLeaveRequest(
             @PathVariable Long requestId,
             @Valid @RequestBody LeaveRequestCreate request,
@@ -311,6 +315,7 @@ public class LeaveRequestsController {
 
     @PostMapping("/{requestId}/submit")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
     public ResponseEntity<ApiResponse<LeaveRequestDto>> submitLeaveRequest(
             @PathVariable Long requestId,
             Authentication authentication) {
@@ -519,6 +524,7 @@ public class LeaveRequestsController {
 
     @PostMapping("/{requestId}/withdraw")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
     public ResponseEntity<ApiResponse<LeaveRequestDto>> withdrawLeaveRequest(
             @PathVariable Long requestId,
             @RequestBody(required = false) com.lms.Leave_Management_System_Backend.dto.WithdrawRequest withdrawRequest,
@@ -555,6 +561,7 @@ public class LeaveRequestsController {
 
     @GetMapping("/{requestId}/approvals")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
     public ResponseEntity<List<LeaveApprovalDto>> getApprovals(
             @PathVariable Long requestId,
             Authentication authentication) {
@@ -598,6 +605,7 @@ public class LeaveRequestsController {
 
     @GetMapping("/{requestId}/comments")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
     public ResponseEntity<List<CommentDto>> getComments(
             @PathVariable Long requestId,
             Authentication authentication) {
@@ -623,6 +631,7 @@ public class LeaveRequestsController {
 
     @PostMapping("/{requestId}/comments")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
     public ResponseEntity<CommentDto> addComment(
             @PathVariable Long requestId,
             @RequestBody CommentRequest commentRequest,
@@ -658,6 +667,7 @@ public class LeaveRequestsController {
 
     @GetMapping("/{requestId}/attachments")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
     public ResponseEntity<List<AttachmentDto>> getAttachments(
             @PathVariable Long requestId,
             Authentication authentication) {
@@ -683,6 +693,7 @@ public class LeaveRequestsController {
 
     @PostMapping("/{requestId}/attachments")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
     public ResponseEntity<AttachmentDto> uploadAttachment(
             @PathVariable Long requestId,
             @RequestParam("file") org.springframework.web.multipart.MultipartFile file,
@@ -722,6 +733,7 @@ public class LeaveRequestsController {
 
     @GetMapping("/{requestId}/pdf")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
     public ResponseEntity<?> downloadRequestPdf(
             @PathVariable Long requestId,
             Authentication authentication) {
@@ -746,6 +758,7 @@ public class LeaveRequestsController {
 
     @GetMapping("/{requestId}/attachments/{attachmentId}")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
     public ResponseEntity<?> downloadAttachment(
             @PathVariable Long requestId,
             @PathVariable Long attachmentId,
