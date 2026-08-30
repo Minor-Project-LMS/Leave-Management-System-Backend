@@ -51,12 +51,30 @@ public class NotificationQueue {
     @Column(name = "is_read")
     private Boolean isRead = false;
 
+    @Column(name = "read_at")
+    private LocalDateTime readAt;
+
+    @Column(name = "source_event_id")
+    private Long sourceEventId;
+
+    @Column(name = "kafka_topic")
+    private String kafkaTopic;
+
+    @Column(name = "kafka_partition")
+    private Integer kafkaPartition;
+
+    @Column(name = "kafka_offset")
+    private Long kafkaOffset;
+
+    @Column(name = "consumer_group")
+    private String consumerGroup = "lms-notification-worker";
+
     public enum Channel {
         EMAIL, IN_APP
     }
 
     public enum NotificationStatus {
-        QUEUED, SENT, FAILED, CANCELLED
+        QUEUED, SENT, FAILED, IN_PROGRESS, CANCELLED
     }
 
     public NotificationQueue() {
@@ -164,6 +182,54 @@ public class NotificationQueue {
 
     public void setIsRead(Boolean isRead) {
         this.isRead = isRead;
+    }
+
+    public LocalDateTime getReadAt() {
+        return readAt;
+    }
+
+    public void setReadAt(LocalDateTime readAt) {
+        this.readAt = readAt;
+    }
+
+    public Long getSourceEventId() {
+        return sourceEventId;
+    }
+
+    public void setSourceEventId(Long sourceEventId) {
+        this.sourceEventId = sourceEventId;
+    }
+
+    public String getKafkaTopic() {
+        return kafkaTopic;
+    }
+
+    public void setKafkaTopic(String kafkaTopic) {
+        this.kafkaTopic = kafkaTopic;
+    }
+
+    public Integer getKafkaPartition() {
+        return kafkaPartition;
+    }
+
+    public void setKafkaPartition(Integer kafkaPartition) {
+        this.kafkaPartition = kafkaPartition;
+    }
+
+    public Long getKafkaOffset() {
+        return kafkaOffset;
+    }
+
+    public void setKafkaOffset(Long kafkaOffset) {
+        this.kafkaOffset = kafkaOffset;
+    }
+
+    public String getConsumerGroup() {
+        return consumerGroup;
+    }
+
+    public void setConsumerGroup(String consumerGroup) {
+        this.consumerGroup = consumerGroup;
     }
 
     @PrePersist

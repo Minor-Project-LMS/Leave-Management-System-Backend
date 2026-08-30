@@ -13,6 +13,10 @@ public class NotificationDto {
     private Integer relatedEntityId;
     private LocalDateTime createdAt;
 
+    // Constructor
+    public NotificationDto() {
+    }
+
     // Getters and Setters
     public Integer getId() {
         return id;

@@ -6,9 +6,12 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface NotificationQueueRepository extends JpaRepository<NotificationQueue, Long>, JpaSpecificationExecutor<NotificationQueue> {
@@ -33,4 +36,9 @@ public interface NotificationQueueRepository extends JpaRepository<NotificationQ
     
     @EntityGraph(attributePaths = {"user"})
     Page<NotificationQueue> findByUserIdAndChannel(Long userId, NotificationQueue.Channel channel, Pageable pageable);
+    
+    @Query("SELECT n FROM NotificationQueue n WHERE n.sourceEventId = :sourceEventId AND n.channel = :channel AND n.user.id = :userId")
+    Optional<NotificationQueue> findBySourceEventIdAndChannelAndUserId(@Param("sourceEventId") Long sourceEventId, 
+                                                                       @Param("channel") NotificationQueue.Channel channel, 
+                                                                       @Param("userId") Long userId);
 }

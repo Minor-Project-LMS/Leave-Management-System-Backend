@@ -3,17 +3,20 @@ package com.lms.Leave_Management_System_Backend.dto;
 import java.time.LocalDateTime;
 
 public class AttachmentDto {
+    
     private Integer id;
+    private String entityType;
+    private Integer entityId;
     private String fileName;
     private String contentType;
     private Long sizeBytes;
-    private Long uploadedBy;
-    private LocalDateTime uploadedAt;
+    private String storageProvider;
+    private String status;
+    private String blobUrl;
     private String downloadUrl;
-
-    // Constructors
-    public AttachmentDto() {}
-
+    private Integer uploadedBy;
+    private LocalDateTime uploadedAt;
+    
     // Getters and Setters
     public Integer getId() {
         return id;
@@ -21,6 +24,22 @@ public class AttachmentDto {
 
     public void setId(Integer id) {
         this.id = id;
+    }
+
+    public String getEntityType() {
+        return entityType;
+    }
+
+    public void setEntityType(String entityType) {
+        this.entityType = entityType;
+    }
+
+    public Integer getEntityId() {
+        return entityId;
+    }
+
+    public void setEntityId(Integer entityId) {
+        this.entityId = entityId;
     }
 
     public String getFileName() {
@@ -47,20 +66,28 @@ public class AttachmentDto {
         this.sizeBytes = sizeBytes;
     }
 
-    public Long getUploadedBy() {
-        return uploadedBy;
+    public String getStorageProvider() {
+        return storageProvider;
     }
 
-    public void setUploadedBy(Long uploadedBy) {
-        this.uploadedBy = uploadedBy;
+    public void setStorageProvider(String storageProvider) {
+        this.storageProvider = storageProvider;
     }
 
-    public LocalDateTime getUploadedAt() {
-        return uploadedAt;
+    public String getStatus() {
+        return status;
     }
 
-    public void setUploadedAt(LocalDateTime uploadedAt) {
-        this.uploadedAt = uploadedAt;
+    public void setStatus(String status) {
+        this.status = status;
+    }
+
+    public String getBlobUrl() {
+        return blobUrl;
+    }
+
+    public void setBlobUrl(String blobUrl) {
+        this.blobUrl = blobUrl;
     }
 
     public String getDownloadUrl() {
@@ -71,20 +98,19 @@ public class AttachmentDto {
         this.downloadUrl = downloadUrl;
     }
 
-    // Backward compatibility
-    public Integer getAttachmentId() {
-        return id;
+    public Integer getUploadedBy() {
+        return uploadedBy;
     }
 
-    public void setAttachmentId(Integer attachmentId) {
-        this.id = attachmentId;
+    public void setUploadedBy(Integer uploadedBy) {
+        this.uploadedBy = uploadedBy;
     }
 
-    public String getFileUrl() {
-        return downloadUrl;
+    public LocalDateTime getUploadedAt() {
+        return uploadedAt;
     }
 
-    public void setFileUrl(String fileUrl) {
-        this.downloadUrl = fileUrl;
+    public void setUploadedAt(LocalDateTime uploadedAt) {
+        this.uploadedAt = uploadedAt;
     }
 }

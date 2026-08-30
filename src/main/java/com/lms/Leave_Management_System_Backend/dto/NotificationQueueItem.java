@@ -17,6 +17,10 @@ public class NotificationQueueItem {
     private LocalDateTime scheduledAt;
     private LocalDateTime createdAt;
     private LocalDateTime sentAt;
+    private Integer sourceEventId;
+    private String kafkaTopic;
+    private Integer kafkaPartition;
+    private Long kafkaOffset;
 
     // Getters and Setters
     public Integer getId() {
@@ -121,5 +125,37 @@ public class NotificationQueueItem {
 
     public void setSentAt(LocalDateTime sentAt) {
         this.sentAt = sentAt;
+    }
+
+    public Integer getSourceEventId() {
+        return sourceEventId;
+    }
+
+    public void setSourceEventId(Integer sourceEventId) {
+        this.sourceEventId = sourceEventId;
+    }
+
+    public String getKafkaTopic() {
+        return kafkaTopic;
+    }
+
+    public void setKafkaTopic(String kafkaTopic) {
+        this.kafkaTopic = kafkaTopic;
+    }
+
+    public Integer getKafkaPartition() {
+        return kafkaPartition;
+    }
+
+    public void setKafkaPartition(Integer kafkaPartition) {
+        this.kafkaPartition = kafkaPartition;
+    }
+
+    public Long getKafkaOffset() {
+        return kafkaOffset;
+    }
+
+    public void setKafkaOffset(Long kafkaOffset) {
+        this.kafkaOffset = kafkaOffset;
     }
 }

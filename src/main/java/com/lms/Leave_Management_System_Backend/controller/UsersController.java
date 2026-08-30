@@ -3,17 +3,26 @@ package com.lms.Leave_Management_System_Backend.controller;
 import com.lms.Leave_Management_System_Backend.dto.*;
 import com.lms.Leave_Management_System_Backend.exception.BusinessRuleException;
 import com.lms.Leave_Management_System_Backend.exception.ResourceNotFoundException;
+import com.lms.Leave_Management_System_Backend.model.Attachment;
 import com.lms.Leave_Management_System_Backend.model.User;
+import com.lms.Leave_Management_System_Backend.repository.AttachmentRepository;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
 import com.lms.Leave_Management_System_Backend.service.AuthService;
+import com.lms.Leave_Management_System_Backend.service.BlobStorageService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+
+import java.io.InputStream;
+import java.net.URL;
+import java.time.Duration;
+import java.time.LocalDateTime;
 
 @RestController
 @RequestMapping("/api/v1/users")
@@ -22,11 +31,16 @@ public class UsersController {
     private final UserRepository userRepository;
     private final AuthService authService;
     private final PasswordEncoder passwordEncoder;
+    private final AttachmentRepository attachmentRepository;
+    private final BlobStorageService blobStorageService;
 
-    public UsersController(UserRepository userRepository, AuthService authService, PasswordEncoder passwordEncoder) {
+    public UsersController(UserRepository userRepository, AuthService authService, PasswordEncoder passwordEncoder,
+                         AttachmentRepository attachmentRepository, BlobStorageService blobStorageService) {
         this.userRepository = userRepository;
         this.authService = authService;
         this.passwordEncoder = passwordEncoder;
+        this.attachmentRepository = attachmentRepository;
+        this.blobStorageService = blobStorageService;
     }
 
     @GetMapping("/me")
@@ -98,6 +112,7 @@ public class UsersController {
 
     @PostMapping("/me/avatar")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
     public ResponseEntity<?> uploadAvatar(
             @RequestParam("file") MultipartFile file,
             Authentication authentication) {
@@ -130,12 +145,56 @@ public class UsersController {
         User user = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
 
-        // In a real implementation, you would upload to a cloud storage service
-        // For now, we'll simulate by setting a placeholder URL
-        String avatarUrl = "/uploads/avatars/" + user.getId() + "_" + file.getOriginalFilename();
-        user.setAvatarUrl(avatarUrl);
-        userRepository.save(user);
+        try {
+            // Generate storage key for avatar
+            String storageKey = blobStorageService.generateStorageKey(
+                    "USER_AVATAR",
+                    user.getId(),
+                    file.getOriginalFilename()
+            );
 
-        return ResponseEntity.ok(new AvatarResponse(avatarUrl));
+            // Get bucket for avatars
+            String bucket = blobStorageService.getBucketForEntityType("USER_AVATAR");
+
+            // Stream upload to blob storage
+            try (InputStream inputStream = file.getInputStream()) {
+                blobStorageService.putObject(
+                        storageKey,
+                        inputStream,
+                        file.getContentType(),
+                        file.getSize()
+                );
+            }
+
+            // Generate blob URL
+            Duration expiry = Duration.ofHours(24);
+            URL blobUrl = blobStorageService.generatePresignedGetUrl(storageKey, expiry);
+
+            // Create ACTIVE attachment
+            Attachment attachment = new Attachment();
+            attachment.setEntityType("USER_AVATAR");
+            attachment.setEntityId(user.getId());
+            attachment.setFileName(file.getOriginalFilename());
+            attachment.setContentType(file.getContentType());
+            attachment.setSizeBytes(file.getSize());
+            attachment.setStorageProvider(Attachment.StorageProvider.S3);
+            attachment.setStorageBucket(bucket);
+            attachment.setStorageKey(storageKey);
+            attachment.setBlobUrl(blobUrl.toString());
+            attachment.setBlobUrlExpiresAt(LocalDateTime.now().plus(expiry));
+            attachment.setStatus(Attachment.AttachmentStatus.ACTIVE);
+            attachment.setUploadedBy(user);
+
+            attachmentRepository.save(attachment);
+
+            // Update user's avatar URL
+            user.setAvatarUrl(blobUrl.toString());
+            userRepository.save(user);
+
+            return ResponseEntity.ok(new AvatarResponse(blobUrl.toString()));
+
+        } catch (Exception e) {
+            throw new BusinessRuleException("UPLOAD_FAILED", "Failed to upload avatar: " + e.getMessage());
+        }
     }
 }

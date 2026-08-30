@@ -17,6 +17,7 @@ import com.lms.Leave_Management_System_Backend.repository.LeaveLedgerRepository;
 import com.lms.Leave_Management_System_Backend.repository.LeaveRequestRepository;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
+import com.lms.Leave_Management_System_Backend.service.NotificationEventService;
 import org.springframework.transaction.annotation.Transactional;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
@@ -46,6 +47,7 @@ public class LeaveRequestsController {
     private final LeaveApprovalRepository leaveApprovalRepository;
     private final ApprovalDelegationRepository delegationRepository;
     private final LeaveLedgerRepository leaveLedgerRepository;
+    private final NotificationEventService notificationEventService;
     
     // In-memory comment storage (comment table would be better for production)
     private static final Map<Long, List<CommentDto>> commentStorage = new ConcurrentHashMap<>();
@@ -56,13 +58,15 @@ public class LeaveRequestsController {
             LeaveCategoryRepository leaveCategoryRepository,
             LeaveApprovalRepository leaveApprovalRepository,
             ApprovalDelegationRepository delegationRepository,
-            LeaveLedgerRepository leaveLedgerRepository) {
+            LeaveLedgerRepository leaveLedgerRepository,
+            NotificationEventService notificationEventService) {
         this.leaveRequestRepository = leaveRequestRepository;
         this.userRepository = userRepository;
         this.leaveCategoryRepository = leaveCategoryRepository;
         this.leaveApprovalRepository = leaveApprovalRepository;
         this.delegationRepository = delegationRepository;
         this.leaveLedgerRepository = leaveLedgerRepository;
+        this.notificationEventService = notificationEventService;
     }
 
     @PostMapping
@@ -509,11 +513,44 @@ public class LeaveRequestsController {
                 
                 leaveRequest.setStatus(LeaveRequest.RequestStatus.APPROVED);
                 leaveRequest.setCurrentApprover(null);
+                
+                // Publish notification event for leave approval
+                Map<String, Object> payload = new HashMap<>();
+                payload.put("user_id", leaveRequest.getUser().getId());
+                payload.put("request_id", leaveRequest.getId());
+                payload.put("total_days", leaveRequest.getTotalDays());
+                payload.put("category", leaveRequest.getCategory().getCategoryName());
+                payload.put("approver_id", currentUser.getId());
+                
+                notificationEventService.publishEvent(
+                        NotificationEventService.AggregateTypes.LEAVE_REQUEST,
+                        leaveRequest.getId(),
+                        NotificationEventService.EventTypes.LEAVE_APPROVED,
+                        payload,
+                        leaveRequest.getUser().getId().toString()
+                );
             }
         } else {
             // Rejected
             leaveRequest.setStatus(LeaveRequest.RequestStatus.REJECTED);
             leaveRequest.setCurrentApprover(null);
+            
+            // Publish notification event for leave rejection
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("user_id", leaveRequest.getUser().getId());
+            payload.put("request_id", leaveRequest.getId());
+            payload.put("total_days", leaveRequest.getTotalDays());
+            payload.put("category", leaveRequest.getCategory().getCategoryName());
+            payload.put("approver_id", currentUser.getId());
+            payload.put("comments", decisionRequest.getComments());
+            
+            notificationEventService.publishEvent(
+                    NotificationEventService.AggregateTypes.LEAVE_REQUEST,
+                    leaveRequest.getId(),
+                    NotificationEventService.EventTypes.LEAVE_REJECTED,
+                    payload,
+                    leaveRequest.getUser().getId().toString()
+                );
         }
 
         LeaveRequest saved = leaveRequestRepository.save(leaveRequest);
@@ -724,7 +761,7 @@ public class LeaveRequestsController {
         attachment.setFileName(file.getOriginalFilename());
         attachment.setContentType(file.getContentType());
         attachment.setSizeBytes(file.getSize());
-        attachment.setUploadedBy(currentUser.getId());
+        attachment.setUploadedBy(currentUser.getId().intValue());
         attachment.setUploadedAt(LocalDateTime.now());
         attachment.setDownloadUrl("/uploads/attachments/" + requestId + "/" + file.getOriginalFilename());
 

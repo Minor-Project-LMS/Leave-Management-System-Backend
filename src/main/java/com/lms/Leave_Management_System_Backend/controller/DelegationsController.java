@@ -7,6 +7,7 @@ import com.lms.Leave_Management_System_Backend.model.User;
 import com.lms.Leave_Management_System_Backend.repository.ApprovalDelegationRepository;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
+import com.lms.Leave_Management_System_Backend.service.NotificationEventService;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -16,7 +17,9 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @RestController
@@ -25,10 +28,13 @@ public class DelegationsController {
 
     private final ApprovalDelegationRepository delegationRepository;
     private final UserRepository userRepository;
+    private final NotificationEventService notificationEventService;
 
-    public DelegationsController(ApprovalDelegationRepository delegationRepository, UserRepository userRepository) {
+    public DelegationsController(ApprovalDelegationRepository delegationRepository, UserRepository userRepository, 
+                               NotificationEventService notificationEventService) {
         this.delegationRepository = delegationRepository;
         this.userRepository = userRepository;
+        this.notificationEventService = notificationEventService;
     }
 
     @GetMapping
@@ -101,6 +107,22 @@ public class DelegationsController {
         delegation.setCreatedAt(LocalDateTime.now());
 
         ApprovalDelegation saved = delegationRepository.save(delegation);
+        
+        // Publish notification event for delegation creation
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("delegator_id", delegator.getId());
+        payload.put("delegate_id", delegate.getId());
+        payload.put("start_date", request.getStartDate());
+        payload.put("end_date", request.getEndDate());
+        
+        notificationEventService.publishEvent(
+                NotificationEventService.AggregateTypes.DELEGATION,
+                saved.getId().longValue(),
+                NotificationEventService.EventTypes.DELEGATION_CREATED,
+                payload,
+                delegate.getId().toString()
+        );
+        
         return ResponseEntity.status(201).body(toDelegationDto(saved));
     }
 
@@ -149,6 +171,21 @@ public class DelegationsController {
         delegation.setEndDate(LocalDate.now()); // End delegation early
 
         ApprovalDelegation saved = delegationRepository.save(delegation);
+        
+        // Publish notification event for delegation revocation
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("delegator_id", delegation.getDelegator().getId());
+        payload.put("delegate_id", delegation.getDelegate().getId());
+        payload.put("revoked_at", LocalDate.now());
+        
+        notificationEventService.publishEvent(
+                NotificationEventService.AggregateTypes.DELEGATION,
+                saved.getId().longValue(),
+                NotificationEventService.EventTypes.DELEGATION_REVOKED,
+                payload,
+                delegation.getDelegate().getId().toString()
+        );
+        
         return ResponseEntity.ok(toDelegationDto(saved));
     }
 

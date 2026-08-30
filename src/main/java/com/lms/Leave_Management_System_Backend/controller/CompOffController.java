@@ -11,6 +11,7 @@ import com.lms.Leave_Management_System_Backend.repository.LeaveCategoryRepositor
 import com.lms.Leave_Management_System_Backend.repository.LeaveLedgerRepository;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
+import com.lms.Leave_Management_System_Backend.service.NotificationEventService;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -25,7 +26,9 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.Year;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @RestController
@@ -36,16 +39,19 @@ public class CompOffController {
     private final UserRepository userRepository;
     private final LeaveLedgerRepository leaveLedgerRepository;
     private final LeaveCategoryRepository leaveCategoryRepository;
+    private final NotificationEventService notificationEventService;
 
     public CompOffController(
             CompOffRequestRepository compOffRequestRepository,
             UserRepository userRepository,
             LeaveLedgerRepository leaveLedgerRepository,
-            LeaveCategoryRepository leaveCategoryRepository) {
+            LeaveCategoryRepository leaveCategoryRepository,
+            NotificationEventService notificationEventService) {
         this.compOffRequestRepository = compOffRequestRepository;
         this.userRepository = userRepository;
         this.leaveLedgerRepository = leaveLedgerRepository;
         this.leaveCategoryRepository = leaveCategoryRepository;
+        this.notificationEventService = notificationEventService;
     }
 
     @PostMapping
@@ -193,9 +199,41 @@ public class CompOffController {
             // 2. Find or create the ledger entry for the user/year/category
             // 3. Update accrued and closing_balance
             
+            // Publish notification event for comp-off approval
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("user_id", request.getUser().getId());
+            payload.put("comp_id", request.getId());
+            payload.put("days_credited", request.getDaysCredited());
+            payload.put("worked_on", request.getWorkedOn());
+            payload.put("approver_id", approver.getId());
+            
+            notificationEventService.publishEvent(
+                    NotificationEventService.AggregateTypes.COMP_OFF_REQUEST,
+                    request.getId(),
+                    NotificationEventService.EventTypes.COMP_OFF_APPROVED,
+                    payload,
+                    request.getUser().getId().toString()
+            );
+            
         } else if ("REJECTED".equals(decisionRequest.getDecision())) {
             request.setStatus(CompOffRequest.RequestStatus.REJECTED);
             request.setApprover(approver);
+            
+            // Publish notification event for comp-off rejection
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("user_id", request.getUser().getId());
+            payload.put("comp_id", request.getId());
+            payload.put("worked_on", request.getWorkedOn());
+            payload.put("approver_id", approver.getId());
+            payload.put("comments", decisionRequest.getComments());
+            
+            notificationEventService.publishEvent(
+                    NotificationEventService.AggregateTypes.COMP_OFF_REQUEST,
+                    request.getId(),
+                    NotificationEventService.EventTypes.COMP_OFF_REJECTED,
+                    payload,
+                    request.getUser().getId().toString()
+            );
         }
 
         CompOffRequest saved = compOffRequestRepository.save(request);
