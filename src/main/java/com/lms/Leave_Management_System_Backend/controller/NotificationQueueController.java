@@ -6,6 +6,7 @@ import com.lms.Leave_Management_System_Backend.dto.PageResponse;
 import com.lms.Leave_Management_System_Backend.model.NotificationQueue;
 import com.lms.Leave_Management_System_Backend.repository.NotificationQueueRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
+import jakarta.transaction.Transactional;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -118,6 +119,7 @@ public class NotificationQueueController {
     }
 
     @PostMapping("/{notificationId}/cancel")
+    @Transactional
     @RequireRole({"HR_ADMIN"})
     public ResponseEntity<NotificationQueueItem> cancelNotification(
             @PathVariable Long notificationId,
@@ -125,11 +127,11 @@ public class NotificationQueueController {
 
         NotificationQueue notification = notificationQueueRepository.findById(notificationId)
                 .orElseThrow(() -> new RuntimeException("Notification not found"));
-        
-        notification.setStatus(NotificationQueue.NotificationStatus.CANCELLED);
-        notificationQueueRepository.save(notification);
 
-        return ResponseEntity.ok(convertToDto(notification));
+        notification.setStatus(NotificationQueue.NotificationStatus.CANCELLED);
+        NotificationQueue updated = notificationQueueRepository.saveAndFlush(notification);
+
+        return ResponseEntity.ok(convertToDto(updated));
     }
 
     @GetMapping("/export")
