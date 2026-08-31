@@ -23,7 +23,7 @@ public class NotificationQueue {
     @Column(name = "template_code", nullable = false)
     private String templateCode;
 
-    @Column(name = "payload", nullable = false, columnDefinition = "JSONB")
+    @Column(name = "payload", nullable = false, columnDefinition = "TEXT")
     private String payload;
 
     @Column(name = "related_entity_type")

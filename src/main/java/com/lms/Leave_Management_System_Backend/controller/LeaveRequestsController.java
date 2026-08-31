@@ -130,6 +130,26 @@ public class LeaveRequestsController {
         leaveRequest.setAppliedAt(LocalDateTime.now());
 
         LeaveRequest saved = leaveRequestRepository.save(leaveRequest);
+
+        if (saved.getStatus() != LeaveRequest.RequestStatus.DRAFT && saved.getCurrentApprover() != null) {
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("user_id", saved.getUser().getId());
+            payload.put("request_id", saved.getId());
+            payload.put("total_days", saved.getTotalDays());
+            payload.put("category", saved.getCategory().getCategoryName());
+            payload.put("approver_id", saved.getCurrentApprover().getId());
+            payload.put("start_date", saved.getStartDate().toString());
+            payload.put("end_date", saved.getEndDate().toString());
+
+            notificationEventService.publishEvent(
+                    NotificationEventService.AggregateTypes.LEAVE_REQUEST,
+                    saved.getId(),
+                    NotificationEventService.EventTypes.LEAVE_SUBMITTED,
+                    payload,
+                    saved.getCurrentApprover().getId().toString()
+            );
+        }
+
         LeaveRequestDto dto = toLeaveRequestDto(saved);
 
         return ResponseEntity.status(201).body(new ApiResponse<LeaveRequestDto>(true, dto));
@@ -390,6 +410,27 @@ public class LeaveRequestsController {
         leaveRequest.setAppliedAt(LocalDateTime.now());
 
         LeaveRequest saved = leaveRequestRepository.save(leaveRequest);
+        
+        // Publish notification event for leave submission
+        if (leaveRequest.getCurrentApprover() != null) {
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("user_id", leaveRequest.getUser().getId());
+            payload.put("request_id", leaveRequest.getId());
+            payload.put("total_days", leaveRequest.getTotalDays());
+            payload.put("category", leaveRequest.getCategory().getCategoryName());
+            payload.put("approver_id", leaveRequest.getCurrentApprover().getId());
+            payload.put("start_date", leaveRequest.getStartDate().toString());
+            payload.put("end_date", leaveRequest.getEndDate().toString());
+            
+            notificationEventService.publishEvent(
+                    NotificationEventService.AggregateTypes.LEAVE_REQUEST,
+                    leaveRequest.getId(),
+                    NotificationEventService.EventTypes.LEAVE_SUBMITTED,
+                    payload,
+                    leaveRequest.getCurrentApprover().getId().toString()
+            );
+        }
+        
         LeaveRequestDto dto = toLeaveRequestDto(saved);
         
         return ResponseEntity.ok(new ApiResponse<LeaveRequestDto>(true, dto));
@@ -492,6 +533,23 @@ public class LeaveRequestsController {
                 User hrAdmin = userRepository.findFirstByRole_RoleCode("HR_ADMIN")
                     .orElseThrow(() -> new ResourceNotFoundException("HR Admin", "role"));
                 leaveRequest.setCurrentApprover(hrAdmin);
+                
+                // Publish notification event for leave escalation to HR
+                Map<String, Object> escalationPayload = new HashMap<>();
+                escalationPayload.put("user_id", leaveRequest.getUser().getId());
+                escalationPayload.put("request_id", leaveRequest.getId());
+                escalationPayload.put("total_days", leaveRequest.getTotalDays());
+                escalationPayload.put("category", leaveRequest.getCategory().getCategoryName());
+                escalationPayload.put("previous_approver_id", currentUser.getId());
+                escalationPayload.put("hr_approver_id", hrAdmin.getId());
+                
+                notificationEventService.publishEvent(
+                        NotificationEventService.AggregateTypes.LEAVE_REQUEST,
+                        leaveRequest.getId(),
+                        NotificationEventService.EventTypes.LEAVE_ESCALATED,
+                        escalationPayload,
+                        hrAdmin.getId().toString()
+                );
             } else {
                 // Final approval - update leave ledger
                 int currentYear = java.time.Year.now().getValue();
@@ -591,6 +649,26 @@ public class LeaveRequestsController {
         }
 
         LeaveRequest saved = leaveRequestRepository.save(leaveRequest);
+        
+        // Publish notification event for leave withdrawal
+        if (leaveRequest.getCurrentApprover() != null) {
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("user_id", leaveRequest.getUser().getId());
+            payload.put("request_id", leaveRequest.getId());
+            payload.put("total_days", leaveRequest.getTotalDays());
+            payload.put("category", leaveRequest.getCategory().getCategoryName());
+            payload.put("approver_id", leaveRequest.getCurrentApprover().getId());
+            payload.put("withdrawal_reason", withdrawRequest != null ? withdrawRequest.getReason() : "No reason provided");
+            
+            notificationEventService.publishEvent(
+                    NotificationEventService.AggregateTypes.LEAVE_REQUEST,
+                    leaveRequest.getId(),
+                    NotificationEventService.EventTypes.LEAVE_WITHDRAWN,
+                    payload,
+                    leaveRequest.getCurrentApprover().getId().toString()
+            );
+        }
+        
         LeaveRequestDto dto = toLeaveRequestDto(saved);
 
         return ResponseEntity.ok(new ApiResponse<LeaveRequestDto>(true, dto));

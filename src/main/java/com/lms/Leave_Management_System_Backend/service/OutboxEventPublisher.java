@@ -1,9 +1,10 @@
 package com.lms.Leave_Management_System_Backend.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lms.Leave_Management_System_Backend.model.OutboxEvent;
 import com.lms.Leave_Management_System_Backend.repository.OutboxEventRepository;
 import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.common.header.internals.RecordHeader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -13,7 +14,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class OutboxEventPublisher {
@@ -24,14 +27,16 @@ public class OutboxEventPublisher {
 
     private final OutboxEventRepository outboxEventRepository;
     private final KafkaTemplate<String, String> kafkaTemplate;
+    private final ObjectMapper objectMapper;
 
     @Value("${spring.kafka.template.default-topic:lms.notifications.v1}")
     private String defaultTopic;
 
-    public OutboxEventPublisher(OutboxEventRepository outboxEventRepository, 
-                               KafkaTemplate<String, String> kafkaTemplate) {
+    public OutboxEventPublisher(OutboxEventRepository outboxEventRepository,
+                                KafkaTemplate<String, String> kafkaTemplate, ObjectMapper objectMapper) {
         this.outboxEventRepository = outboxEventRepository;
         this.kafkaTemplate = kafkaTemplate;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -42,6 +47,8 @@ public class OutboxEventPublisher {
     @Transactional
     public void processPendingEvents() {
         try {
+            log.debug("Scheduled task: Checking for pending outbox events");
+            
             // Get a batch of pending events
             List<OutboxEvent> pendingEvents = outboxEventRepository.findPendingEvents()
                     .stream()
@@ -49,6 +56,7 @@ public class OutboxEventPublisher {
                     .toList();
 
             if (pendingEvents.isEmpty()) {
+                log.debug("No pending outbox events to process");
                 return;
             }
 
@@ -67,14 +75,41 @@ public class OutboxEventPublisher {
      */
     private void processEvent(OutboxEvent event) {
         try {
+            log.debug("Processing outbox event: id={}, type={}, aggregate={}", 
+                     event.getId(), event.getEventType(), event.getAggregateType());
+            
             // Use the event ID as the Kafka key for proper partitioning and tracing
             String kafkaKey = event.getKafkaKey() != null ? event.getKafkaKey() : event.getId().toString();
+
+            // Build JSON envelope expected by NotificationConsumer
+            Map<String, Object> envelope = new HashMap<>();
+            envelope.put("event_type", event.getEventType());
+            envelope.put("aggregate_type", event.getAggregateType());
+            envelope.put("aggregate_id", event.getAggregateId());
+            
+            // Parse the payload as a JsonNode to ensure it's valid JSON
+            JsonNode payloadNode;
+            try {
+                payloadNode = objectMapper.readTree(event.getPayload());
+            } catch (Exception e) {
+                // If payload is not valid JSON, wrap it as a string value
+                log.warn("Payload is not valid JSON for event {}, wrapping as string. Payload: {}", 
+                        event.getId(), event.getPayload());
+                Map<String, String> fallbackPayload = new HashMap<>();
+                fallbackPayload.put("raw_payload", event.getPayload());
+                payloadNode = objectMapper.valueToTree(fallbackPayload);
+            }
+            envelope.put("payload", payloadNode);
+
+            String fullPayloadJson = objectMapper.writeValueAsString(envelope);
+            log.debug("Prepared Kafka message: topic={}, key={}, payload={}", 
+                     event.getKafkaTopic(), kafkaKey, fullPayloadJson);
             
             // Create a ProducerRecord with headers for tracing
             ProducerRecord<String, String> record = new ProducerRecord<>(
                     event.getKafkaTopic(),
                     kafkaKey,
-                    event.getPayload()
+                   fullPayloadJson
             );
             
             // Add tracing headers
@@ -87,9 +122,11 @@ public class OutboxEventPublisher {
             kafkaTemplate.send(record).whenComplete((result, ex) -> {
                 if (ex == null) {
                     // Success - mark as published
+                    log.info("Successfully published outbox event {} to Kafka", event.getId());
                     markAsPublished(event);
                 } else {
                     // Failure - increment retry count and mark as failed if exceeded max retries
+                    log.error("Failed to publish outbox event {} to Kafka", event.getId(), ex);
                     handlePublishFailure(event, ex);
                 }
             });

@@ -257,13 +257,6 @@ public class NotificationsController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
-//        UserNotificationPreferences preferencesEntity = userNotificationPreferencesRepository
-//                .findByUserId(currentUser.getId())
-//                .orElseGet(() -> {
-//                    // Create default preferences if not exist
-//                    UserNotificationPreferences newPreferences = new UserNotificationPreferences(currentUser);
-//                    return userNotificationPreferencesRepository.save(newPreferences);
-//                });
         UserNotificationPreferences preferencesEntity = userNotificationPreferencesRepository
                 .findByUserId(currentUser.getId())
                 .orElseGet(() -> new UserNotificationPreferences(currentUser));

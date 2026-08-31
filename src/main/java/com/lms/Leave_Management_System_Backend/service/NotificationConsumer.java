@@ -45,6 +45,9 @@ public class NotificationConsumer {
     @Transactional
     public void consumeNotification(ConsumerRecord<String, String> record, Acknowledgment acknowledgment) {
         try {
+            log.info("Received Kafka message: partition={}, offset={}, key={}", 
+                     record.partition(), record.offset(), record.key());
+            
             JsonNode event = objectMapper.readTree(record.value());
             
             String eventType = event.get("event_type").asText();
@@ -52,15 +55,26 @@ public class NotificationConsumer {
             Long aggregateId = event.get("aggregate_id").asLong();
             JsonNode payload = event.get("payload");
             
-            // Extract source event ID from headers or use a correlation ID
-            // For now, we'll use the offset as a temporary unique identifier
-            Long sourceEventId = record.offset();
+            // Extract source event ID from headers (set by OutboxEventPublisher)
+            Long sourceEventId = null;
+            if (record.headers() != null && record.headers().lastHeader("outbox_event_id") != null) {
+                try {
+                    sourceEventId = Long.parseLong(new String(record.headers().lastHeader("outbox_event_id").value()));
+                } catch (Exception e) {
+                    log.warn("Failed to parse outbox_event_id from header, falling back to offset");
+                    sourceEventId = record.offset();
+                }
+            } else {
+                sourceEventId = record.offset();
+            }
             
             log.info("Consumed notification event: type={}, aggregate={}, partition={}, offset={}", 
                      eventType, aggregateType, record.partition(), record.offset());
             
             // Resolve recipients and channels for this event type
             List<NotificationTarget> targets = resolveNotificationTargets(eventType, aggregateType, aggregateId, payload);
+            
+            log.info("Resolved {} notification targets for event type {}", targets.size(), eventType);
             
             // Create notification queue entries for each target
             for (NotificationTarget target : targets) {
@@ -70,10 +84,12 @@ public class NotificationConsumer {
             // Acknowledge the message
             if (acknowledgment != null) {
                 acknowledgment.acknowledge();
+                log.info("Acknowledged Kafka message for event type {}", eventType);
             }
             
         } catch (Exception e) {
-            log.error("Error consuming notification event", e);
+            log.error("Error consuming notification event: partition={}, offset={}, value={}", 
+                     record.partition(), record.offset(), record.value(), e);
             // Don't acknowledge - let Kafka retry
         }
     }
@@ -86,10 +102,11 @@ public class NotificationConsumer {
         List<NotificationTarget> targets = new ArrayList<>();
         
         try {
+            log.debug("Resolving targets for event type: {}, payload: {}", eventType, payload);
+            
             switch (eventType) {
                 case NotificationEventService.EventTypes.LEAVE_APPROVED:
                 case NotificationEventService.EventTypes.LEAVE_REJECTED:
-                case NotificationEventService.EventTypes.LEAVE_ESCALATED:
                     // Notify the leave request owner
                     Long userId = payload.has("user_id") ? payload.get("user_id").asLong() : null;
                     if (userId != null) {
@@ -97,6 +114,9 @@ public class NotificationConsumer {
                                 getTemplateCode(eventType), payload.toString()));
                         targets.add(new NotificationTarget(userId, NotificationQueue.Channel.EMAIL, 
                                 getTemplateCode(eventType), payload.toString()));
+                        log.debug("Added notification targets for user {} for event {}", userId, eventType);
+                    } else {
+                        log.warn("Missing user_id in payload for event type: {}", eventType);
                     }
                     break;
                     
@@ -108,6 +128,51 @@ public class NotificationConsumer {
                                 "LEAVE_APPROVAL_REQUIRED", payload.toString()));
                         targets.add(new NotificationTarget(approverId, NotificationQueue.Channel.EMAIL, 
                                 "LEAVE_APPROVAL_REQUIRED", payload.toString()));
+                        log.debug("Added notification targets for approver {} for LEAVE_SUBMITTED", approverId);
+                    } else {
+                        log.warn("Missing approver_id in payload for LEAVE_SUBMITTED event");
+                    }
+                    break;
+                    
+                case NotificationEventService.EventTypes.LEAVE_ESCALATED:
+                    // Notify the HR approver
+                    Long hrApproverId = payload.has("hr_approver_id") ? payload.get("hr_approver_id").asLong() : null;
+                    if (hrApproverId != null) {
+                        targets.add(new NotificationTarget(hrApproverId, NotificationQueue.Channel.IN_APP, 
+                                "LEAVE_HR_APPROVAL_REQUIRED", payload.toString()));
+                        targets.add(new NotificationTarget(hrApproverId, NotificationQueue.Channel.EMAIL, 
+                                "LEAVE_HR_APPROVAL_REQUIRED", payload.toString()));
+                        log.debug("Added notification targets for HR approver {} for LEAVE_ESCALATED", hrApproverId);
+                    } else {
+                        log.warn("Missing hr_approver_id in payload for LEAVE_ESCALATED event");
+                    }
+                    break;
+                    
+                case NotificationEventService.EventTypes.LEAVE_WITHDRAWN:
+                    // Notify the approver about withdrawal
+                    Long withdrawApproverId = payload.has("approver_id") ? payload.get("approver_id").asLong() : null;
+                    if (withdrawApproverId != null) {
+                        targets.add(new NotificationTarget(withdrawApproverId, NotificationQueue.Channel.IN_APP, 
+                                "LEAVE_WITHDRAWN", payload.toString()));
+                        targets.add(new NotificationTarget(withdrawApproverId, NotificationQueue.Channel.EMAIL, 
+                                "LEAVE_WITHDRAWN", payload.toString()));
+                        log.debug("Added notification targets for approver {} for LEAVE_WITHDRAWN", withdrawApproverId);
+                    } else {
+                        log.warn("Missing approver_id in payload for LEAVE_WITHDRAWN event");
+                    }
+                    break;
+                    
+                case NotificationEventService.EventTypes.COMP_OFF_SUBMITTED:
+                    // Notify the approver for comp-off request
+                    Long compOffApproverId = payload.has("approver_id") ? payload.get("approver_id").asLong() : null;
+                    if (compOffApproverId != null) {
+                        targets.add(new NotificationTarget(compOffApproverId, NotificationQueue.Channel.IN_APP, 
+                                "COMP_OFF_APPROVAL_REQUIRED", payload.toString()));
+                        targets.add(new NotificationTarget(compOffApproverId, NotificationQueue.Channel.EMAIL, 
+                                "COMP_OFF_APPROVAL_REQUIRED", payload.toString()));
+                        log.debug("Added notification targets for approver {} for COMP_OFF_SUBMITTED", compOffApproverId);
+                    } else {
+                        log.warn("Missing approver_id in payload for COMP_OFF_SUBMITTED event");
                     }
                     break;
                     
@@ -120,6 +185,9 @@ public class NotificationConsumer {
                                 getTemplateCode(eventType), payload.toString()));
                         targets.add(new NotificationTarget(compOffUserId, NotificationQueue.Channel.EMAIL, 
                                 getTemplateCode(eventType), payload.toString()));
+                        log.debug("Added notification targets for user {} for COMP_OFF event", compOffUserId);
+                    } else {
+                        log.warn("Missing user_id in payload for COMP_OFF event");
                     }
                     break;
                     
@@ -132,6 +200,9 @@ public class NotificationConsumer {
                                 getTemplateCode(eventType), payload.toString()));
                         targets.add(new NotificationTarget(delegateId, NotificationQueue.Channel.EMAIL, 
                                 getTemplateCode(eventType), payload.toString()));
+                        log.debug("Added notification targets for delegate {} for DELEGATION event", delegateId);
+                    } else {
+                        log.warn("Missing delegate_id in payload for DELEGATION event");
                     }
                     break;
                     
@@ -157,6 +228,9 @@ public class NotificationConsumer {
      */
     private void upsertNotificationQueue(NotificationTarget target, ConsumerRecord<String, String> record, Long sourceEventId) {
         try {
+            log.debug("Upserting notification: userId={}, channel={}, template={}, sourceEventId={}", 
+                     target.userId, target.channel, target.templateCode, sourceEventId);
+            
             // Check if notification already exists (idempotency check)
             Optional<NotificationQueue> existing = notificationQueueRepository
                     .findBySourceEventIdAndChannelAndUserId(
@@ -191,15 +265,24 @@ public class NotificationConsumer {
             notificationQueueRepository.save(notification);
             
             // If EMAIL, send immediately
+            // Process delivery based on channel type
             if (target.channel == NotificationQueue.Channel.EMAIL) {
                 sendEmailNotification(notification, user);
+            } else if (target.channel == NotificationQueue.Channel.IN_APP) {
+                // IN_APP notifications are ready for display immediately after creation
+                notification.setStatus(NotificationQueue.NotificationStatus.SENT);
+                notification.setSentAt(LocalDateTime.now());
+                notificationQueueRepository.save(notification);
+                log.info("IN_APP notification created and marked as SENT for user={}, template={}", 
+                         user.getEmail(), target.templateCode);
             }
             
             log.info("Created notification queue entry: user={}, channel={}, template={}", 
                      user.getEmail(), target.channel, target.templateCode);
             
         } catch (Exception e) {
-            log.error("Error upserting notification queue entry", e);
+            log.error("Error upserting notification queue entry for userId={}, channel={}, template={}", 
+                     target.userId, target.channel, target.templateCode, e);
         }
     }
 
