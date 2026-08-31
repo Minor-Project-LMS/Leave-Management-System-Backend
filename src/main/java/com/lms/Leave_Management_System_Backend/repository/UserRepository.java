@@ -50,4 +50,18 @@ public interface UserRepository extends JpaRepository<User, Long> {
     @EntityGraph(attributePaths = {"role", "department", "reportsTo"})
     @Query("SELECT u FROM User u WHERE u.role.roleCode = :roleCode AND u.employmentStatus = 'ACTIVE'")
     Optional<User> findFirstByRole_RoleCode(@Param("roleCode") String roleCode);
+
+    @EntityGraph(attributePaths = {"role", "department", "reportsTo"})
+    @Query("SELECT u FROM User u WHERE " +
+            "(:isManager = false OR u.reportsTo.id = :managerId) AND " +
+            "(:departmentId IS NULL OR u.department.id = :departmentId) AND " +
+            "(:q IS NULL OR LOWER(u.fullName) LIKE LOWER(CONCAT('%', :q, '%')) " +
+            "OR LOWER(u.email) LIKE LOWER(CONCAT('%', :q, '%')) " +
+            "OR LOWER(u.employeeCode) LIKE LOWER(CONCAT('%', :q, '%')))")
+    Page<User> findTeamMembers(
+            @Param("isManager") boolean isManager,
+            @Param("managerId") Long managerId,
+            @Param("departmentId") Integer departmentId,
+            @Param("q") String q,
+            Pageable pageable);
 }

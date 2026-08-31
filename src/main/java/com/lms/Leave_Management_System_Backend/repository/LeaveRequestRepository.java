@@ -53,4 +53,15 @@ public interface LeaveRequestRepository extends JpaRepository<LeaveRequest, Long
     @EntityGraph(attributePaths = {"user", "category", "currentApprover", "handoverTo"})
     @Query("SELECT lr FROM LeaveRequest lr WHERE lr.id IN :requestIds")
     List<LeaveRequest> findByIds(@Param("requestIds") List<Long> requestIds);
+
+    @EntityGraph(attributePaths = {"user", "category"})
+    @Query("SELECT lr FROM LeaveRequest lr " +
+            "WHERE lr.status = 'APPROVED' " +
+            "AND lr.user.id IN :userIds " +
+            "AND lr.startDate <= :endDate " +
+            "AND lr.endDate >= :startDate")
+    List<LeaveRequest> findApprovedLeavesForUsers(
+            @Param("userIds") List<Long> userIds,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate);
 }
