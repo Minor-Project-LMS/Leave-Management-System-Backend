@@ -55,9 +55,10 @@ public interface UserRepository extends JpaRepository<User, Long> {
     @Query("SELECT u FROM User u WHERE " +
             "(:isManager = false OR u.reportsTo.id = :managerId) AND " +
             "(:departmentId IS NULL OR u.department.id = :departmentId) AND " +
-            "(:q IS NULL OR LOWER(u.fullName) LIKE LOWER(CONCAT('%', :q, '%')) " +
-            "OR LOWER(u.email) LIKE LOWER(CONCAT('%', :q, '%')) " +
-            "OR LOWER(u.employeeCode) LIKE LOWER(CONCAT('%', :q, '%')))")
+            "(CAST(:q AS string) IS NULL OR " +
+            " LOWER(u.fullName) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')) OR " +
+            " LOWER(u.email) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')) OR " +
+            " LOWER(u.employeeCode) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))")
     Page<User> findTeamMembers(
             @Param("isManager") boolean isManager,
             @Param("managerId") Long managerId,
