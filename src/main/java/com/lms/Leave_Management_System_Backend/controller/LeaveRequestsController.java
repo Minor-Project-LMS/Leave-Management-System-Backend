@@ -5,17 +5,9 @@ import com.lms.Leave_Management_System_Backend.exception.BusinessRuleException;
 import com.lms.Leave_Management_System_Backend.exception.ConflictException;
 import com.lms.Leave_Management_System_Backend.exception.ResourceNotFoundException;
 import com.lms.Leave_Management_System_Backend.exception.SecurityException;
-import com.lms.Leave_Management_System_Backend.model.ApprovalDelegation;
+import com.lms.Leave_Management_System_Backend.model.*;
 import com.lms.Leave_Management_System_Backend.model.LeaveApproval;
-import com.lms.Leave_Management_System_Backend.model.LeaveLedger;
-import com.lms.Leave_Management_System_Backend.model.LeaveRequest;
-import com.lms.Leave_Management_System_Backend.model.User;
-import com.lms.Leave_Management_System_Backend.repository.ApprovalDelegationRepository;
-import com.lms.Leave_Management_System_Backend.repository.LeaveApprovalRepository;
-import com.lms.Leave_Management_System_Backend.repository.LeaveCategoryRepository;
-import com.lms.Leave_Management_System_Backend.repository.LeaveLedgerRepository;
-import com.lms.Leave_Management_System_Backend.repository.LeaveRequestRepository;
-import com.lms.Leave_Management_System_Backend.repository.UserRepository;
+import com.lms.Leave_Management_System_Backend.repository.*;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
 import org.springframework.transaction.annotation.Transactional;
 import jakarta.validation.Valid;
@@ -46,6 +38,7 @@ public class LeaveRequestsController {
     private final LeaveApprovalRepository leaveApprovalRepository;
     private final ApprovalDelegationRepository delegationRepository;
     private final LeaveLedgerRepository leaveLedgerRepository;
+    private final NotificationQueueRepository notificationQueueRepository;
     
     // In-memory comment storage (comment table would be better for production)
     private static final Map<Long, List<CommentDto>> commentStorage = new ConcurrentHashMap<>();
@@ -56,13 +49,14 @@ public class LeaveRequestsController {
             LeaveCategoryRepository leaveCategoryRepository,
             LeaveApprovalRepository leaveApprovalRepository,
             ApprovalDelegationRepository delegationRepository,
-            LeaveLedgerRepository leaveLedgerRepository) {
+            LeaveLedgerRepository leaveLedgerRepository, NotificationQueueRepository notificationQueueRepository) {
         this.leaveRequestRepository = leaveRequestRepository;
         this.userRepository = userRepository;
         this.leaveCategoryRepository = leaveCategoryRepository;
         this.leaveApprovalRepository = leaveApprovalRepository;
         this.delegationRepository = delegationRepository;
         this.leaveLedgerRepository = leaveLedgerRepository;
+        this.notificationQueueRepository = notificationQueueRepository;
     }
 
     @PostMapping
@@ -126,6 +120,14 @@ public class LeaveRequestsController {
         leaveRequest.setAppliedAt(LocalDateTime.now());
 
         LeaveRequest saved = leaveRequestRepository.save(leaveRequest);
+        createNotification(
+                saved.getUser(),
+                "LEAVE_SUBMITTED",
+                "Leave Request Submitted",
+                "Your leave request for " + saved.getTotalDays() + " day(s) has been submitted.",
+                "LEAVE_REQUEST",
+                saved.getId()
+        );
         LeaveRequestDto dto = toLeaveRequestDto(saved);
 
         return ResponseEntity.status(201).body(new ApiResponse<LeaveRequestDto>(true, dto));
@@ -517,6 +519,39 @@ public class LeaveRequestsController {
         }
 
         LeaveRequest saved = leaveRequestRepository.save(leaveRequest);
+        if ("APPROVED".equals(decisionRequest.getDecision())) {
+            if (saved.getStatus() == LeaveRequest.RequestStatus.APPROVED) {
+                // Final Approval Notification to Employee
+                createNotification(
+                        saved.getUser(),
+                        "LEAVE_APPROVED",
+                        "Leave Request Approved",
+                        "Your leave request from " + saved.getStartDate() + " to " + saved.getEndDate() + " has been approved.",
+                        "LEAVE_APPROVAL",
+                        saved.getId()
+                );
+            } else if (saved.getStatus() == LeaveRequest.RequestStatus.PENDING_L2) {
+                // HR Level Pending Notification to HR Admin
+                createNotification(
+                        saved.getCurrentApprover(),
+                        "LEAVE_HR_APPROVAL_PENDING",
+                        "HR Approval Required",
+                        "A leave request for " + saved.getUser().getName() + " requires HR level approval.",
+                        "LEAVE_APPROVAL",
+                        saved.getId()
+                );
+            }
+        } else if ("REJECTED".equals(decisionRequest.getDecision())) {
+            // Rejection Notification to Employee
+            createNotification(
+                    saved.getUser(),
+                    "LEAVE_REJECTED",
+                    "Leave Request Rejected",
+                    "Your leave request was rejected. Reason: " + decisionRequest.getComments(),
+                    "LEAVE_APPROVAL",
+                    saved.getId()
+            );
+        }
         LeaveRequestDto dto = toLeaveRequestDto(saved);
 
         return ResponseEntity.ok(new ApiResponse<LeaveRequestDto>(true, dto));
@@ -554,6 +589,7 @@ public class LeaveRequestsController {
         }
 
         LeaveRequest saved = leaveRequestRepository.save(leaveRequest);
+
         LeaveRequestDto dto = toLeaveRequestDto(saved);
 
         return ResponseEntity.ok(new ApiResponse<LeaveRequestDto>(true, dto));
@@ -816,5 +852,23 @@ public class LeaveRequestsController {
         }
         dto.setAppliedAt(request.getAppliedAt());
         return dto;
+    }
+
+    private void createNotification(User recipient, String templateCode, String title, String message, String entityType, Long entityId) {
+        NotificationQueue notification = new NotificationQueue();
+        notification.setUser(recipient);
+        notification.setChannel(NotificationQueue.Channel.IN_APP);
+        notification.setStatus(NotificationQueue.NotificationStatus.QUEUED);
+        notification.setTemplateCode(templateCode);
+        notification.setRelatedEntityType(entityType);
+        notification.setRelatedEntityId(entityId);
+        notification.setCreatedAt(LocalDateTime.now());
+        notification.setIsRead(false);
+
+        // Format payload as JSON so NotificationsController can parse title & description
+        String payload = String.format("{\"title\":\"%s\",\"message\":\"%s\"}", title, message);
+        notification.setPayload(payload);
+
+        notificationQueueRepository.save(notification);
     }
 }
