@@ -5,7 +5,6 @@ import com.lms.Leave_Management_System_Backend.exception.ConflictException;
 import com.lms.Leave_Management_System_Backend.exception.ResourceNotFoundException;
 import com.lms.Leave_Management_System_Backend.exception.SecurityException;
 import com.lms.Leave_Management_System_Backend.model.CompOffRequest;
-import com.lms.Leave_Management_System_Backend.model.LeaveLedger;
 import com.lms.Leave_Management_System_Backend.model.User;
 import com.lms.Leave_Management_System_Backend.repository.CompOffRequestRepository;
 import com.lms.Leave_Management_System_Backend.repository.LeaveCategoryRepository;

@@ -1,9 +1,7 @@
 package com.lms.Leave_Management_System_Backend.controller;
 
 import com.lms.Leave_Management_System_Backend.dto.*;
-import com.lms.Leave_Management_System_Backend.exception.BusinessRuleException;
 import com.lms.Leave_Management_System_Backend.exception.ResourceNotFoundException;
-import com.lms.Leave_Management_System_Backend.exception.SecurityException;
 import com.lms.Leave_Management_System_Backend.model.User;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
@@ -38,7 +36,7 @@ public class UsersController {
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
     public ResponseEntity<ApiResponse<UserDto>> getMyProfile(Authentication authentication) {
         String email = authentication.getName();
-        User user = userRepository.findByEmailIgnoreCase(email)
+        userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
         
         UserDto userDto = authService.getUserByEmail(email);
