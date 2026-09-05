@@ -1,13 +1,16 @@
 package com.lms.Leave_Management_System_Backend.service;
 
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.model.*;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
@@ -44,7 +47,7 @@ public class StorageService {
         // Initialize will be called by Spring after properties are set
     }
 
-    @jakarta.annotation.PostConstruct
+    @PostConstruct
     public void initialize() {
         try {
             if (storageEndpoint != null && !storageEndpoint.isEmpty() &&
@@ -53,24 +56,29 @@ public class StorageService {
 
                 AwsBasicCredentials credentials = AwsBasicCredentials.create(accessKey, secretKey);
 
+                // Shared S3 configuration enforcing Path-Style Access for Supabase
+                S3Configuration s3Config = S3Configuration.builder()
+                        .pathStyleAccessEnabled(true)
+                        .build();
+
                 var s3ClientBuilder = S3Client.builder()
                         .credentialsProvider(StaticCredentialsProvider.create(credentials))
-                        .region(Region.of(region));
+                        .region(Region.of(region))
+                        .serviceConfiguration(s3Config)
+                        .httpClientBuilder(UrlConnectionHttpClient.builder());
 
                 // Configure for custom endpoint (e.g., Supabase)
                 if (!storageEndpoint.isEmpty()) {
                     s3ClientBuilder.endpointOverride(URI.create(storageEndpoint));
-                    s3ClientBuilder.serviceConfiguration(b -> 
-                        b.pathStyleAccessEnabled(true) // Required for Supabase
-                    );
                 }
 
                 this.s3Client = s3ClientBuilder.build();
 
-                // Initialize presigner
+                // Initialize S3Presigner WITH path-style access configuration
                 S3Presigner.Builder presignerBuilder = S3Presigner.builder()
                         .credentialsProvider(StaticCredentialsProvider.create(credentials))
-                        .region(Region.of(region));
+                        .region(Region.of(region))
+                        .serviceConfiguration(s3Config);
 
                 if (!storageEndpoint.isEmpty()) {
                     presignerBuilder.endpointOverride(URI.create(storageEndpoint));
@@ -82,8 +90,9 @@ public class StorageService {
             } else {
                 log.warn("Storage service not initialized - missing configuration. File uploads will be disabled.");
             }
-        } catch (Exception e) {
-            log.error("Failed to initialize storage service", e);
+        } catch (Throwable t) {
+            log.error("Failed to initialize storage service", t);
+            throw new RuntimeException("Storage service initialization failed", t);
         }
     }
 
@@ -116,7 +125,6 @@ public class StorageService {
                     .bucket(bucketName)
                     .key(storageKey)
                     .contentType(contentType)
-                    .contentLength(sizeBytes)
                     .build();
 
             software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest presignedRequest = 

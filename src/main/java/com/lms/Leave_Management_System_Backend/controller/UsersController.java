@@ -14,7 +14,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.multipart.MultipartFile;
+
 
 @RestController
 @RequestMapping("/api/v1/users")
@@ -99,48 +99,8 @@ public class UsersController {
         return ResponseEntity.ok(new ApiResponse<>(true, null));
     }
 
-    @PostMapping("/me/avatar")
-    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
-    public ResponseEntity<?> uploadAvatar(
-            @RequestParam("file") MultipartFile file,
-            Authentication authentication) {
-        
-        // Check file size (10 MB limit as per OpenAPI spec)
-        long maxSize = 10 * 1024 * 1024; // 10 MB in bytes
-        if (file.getSize() > maxSize) {
-            return ResponseEntity
-                    .status(HttpStatus.BAD_REQUEST)
-                    .body(new ApiErrorResponse(
-                            "FILE_TOO_LARGE",
-                            "File size exceeds the 10 MB limit",
-                            "/users/me/avatar"
-                    ));
-        }
-
-        // Validate file type (images only)
-        String contentType = file.getContentType();
-        if (contentType == null || !contentType.startsWith("image/")) {
-            return ResponseEntity
-                    .status(HttpStatus.BAD_REQUEST)
-                    .body(new ApiErrorResponse(
-                            "INVALID_FILE_TYPE",
-                            "Only image files are allowed",
-                            "/users/me/avatar"
-                    ));
-        }
-
-        String email = authentication.getName();
-        User user = userRepository.findByEmailIgnoreCase(email)
-                .orElseThrow(() -> new ResourceNotFoundException("User", email));
-
-        // In a real implementation, you would upload to a cloud storage service
-        // For now, we'll simulate by setting a placeholder URL
-        String avatarUrl = "/uploads/avatars/" + user.getId() + "_" + file.getOriginalFilename();
-        user.setAvatarUrl(avatarUrl);
-        userRepository.save(user);
-
-        return ResponseEntity.ok(new AvatarResponse(avatarUrl));
-    }
+    // Legacy multipart avatar upload removed - all avatar uploads now use pre-signed URL flow
+    // through /me/avatar/init-upload and /me/avatar/{attachmentId}/confirm endpoints
 
     // ============================================================
     // AVATAR UPLOAD ENDPOINTS (Direct-to-Storage)
