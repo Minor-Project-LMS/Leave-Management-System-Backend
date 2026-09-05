@@ -3,6 +3,7 @@ package com.lms.Leave_Management_System_Backend.controller;
 import com.lms.Leave_Management_System_Backend.dto.*;
 import com.lms.Leave_Management_System_Backend.exception.ConflictException;
 import com.lms.Leave_Management_System_Backend.exception.ResourceNotFoundException;
+import com.lms.Leave_Management_System_Backend.exception.SecurityException;
 import com.lms.Leave_Management_System_Backend.model.CompOffRequest;
 import com.lms.Leave_Management_System_Backend.model.LeaveLedger;
 import com.lms.Leave_Management_System_Backend.model.User;
@@ -11,6 +12,7 @@ import com.lms.Leave_Management_System_Backend.repository.LeaveCategoryRepositor
 import com.lms.Leave_Management_System_Backend.repository.LeaveLedgerRepository;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
+import com.lms.Leave_Management_System_Backend.service.AttachmentService;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -21,11 +23,10 @@ import org.springframework.security.core.Authentication;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.math.BigDecimal;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.Year;
-import java.util.List;
 import java.util.stream.Collectors;
 
 @RestController
@@ -36,16 +37,19 @@ public class CompOffController {
     private final UserRepository userRepository;
     private final LeaveLedgerRepository leaveLedgerRepository;
     private final LeaveCategoryRepository leaveCategoryRepository;
+    private final AttachmentService attachmentService;
 
     public CompOffController(
             CompOffRequestRepository compOffRequestRepository,
             UserRepository userRepository,
             LeaveLedgerRepository leaveLedgerRepository,
-            LeaveCategoryRepository leaveCategoryRepository) {
+            LeaveCategoryRepository leaveCategoryRepository,
+            AttachmentService attachmentService) {
         this.compOffRequestRepository = compOffRequestRepository;
         this.userRepository = userRepository;
         this.leaveLedgerRepository = leaveLedgerRepository;
         this.leaveCategoryRepository = leaveCategoryRepository;
+        this.attachmentService = attachmentService;
     }
 
     @PostMapping
@@ -256,5 +260,119 @@ public class CompOffController {
         
         dto.setCreatedAt(request.getCreatedAt());
         return dto;
+    }
+
+    // ============================================================
+    // ATTACHMENT ENDPOINTS
+    // ============================================================
+
+    @GetMapping("/{compId}/attachments")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
+    public ResponseEntity<List<AttachmentDto>> getAttachments(
+            @PathVariable Long compId,
+            Authentication authentication) {
+
+        CompOffRequest compOffRequest = compOffRequestRepository.findById(compId)
+                .orElseThrow(() -> new ResourceNotFoundException("CompOffRequest", compId));
+
+        // Check access permissions
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") &&
+                !compOffRequest.getUser().getId().equals(currentUser.getId())) {
+            throw new SecurityException("You can only view attachments for your own comp-off requests");
+        }
+
+        List<AttachmentDto> attachments = attachmentService.listAttachments(
+                com.lms.Leave_Management_System_Backend.model.Attachment.EntityType.COMP_OFF_REQUEST,
+                compId
+        );
+
+        return ResponseEntity.ok(attachments);
+    }
+
+    @PostMapping("/{compId}/attachments/init-upload")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
+    public ResponseEntity<ApiResponse<AttachmentInitUploadResponse>> initAttachmentUpload(
+            @PathVariable Long compId,
+            @Valid @RequestBody AttachmentInitUploadRequest request,
+            Authentication authentication) {
+
+        CompOffRequest compOffRequest = compOffRequestRepository.findById(compId)
+                .orElseThrow(() -> new ResourceNotFoundException("CompOffRequest", compId));
+
+        // Check access permissions - only the request owner can upload
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        if (!compOffRequest.getUser().getId().equals(currentUser.getId())) {
+            throw new SecurityException("You can only upload attachments to your own comp-off requests");
+        }
+
+        AttachmentInitUploadResponse response = attachmentService.initializeUpload(
+                com.lms.Leave_Management_System_Backend.model.Attachment.EntityType.COMP_OFF_REQUEST,
+                compId,
+                request,
+                currentUser.getId()
+        );
+
+        return ResponseEntity.status(201).body(new ApiResponse<>(true, response));
+    }
+
+    @PostMapping("/{compId}/attachments/{attachmentId}/confirm")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
+    public ResponseEntity<ApiResponse<AttachmentDto>> confirmAttachmentUpload(
+            @PathVariable Long compId,
+            @PathVariable Long attachmentId,
+            @RequestBody(required = false) AttachmentConfirmRequest confirmRequest,
+            Authentication authentication) {
+
+        CompOffRequest compOffRequest = compOffRequestRepository.findById(compId)
+                .orElseThrow(() -> new ResourceNotFoundException("CompOffRequest", compId));
+
+        // Check access permissions - only the request owner can confirm
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        if (!compOffRequest.getUser().getId().equals(currentUser.getId())) {
+            throw new SecurityException("You can only confirm attachments for your own comp-off requests");
+        }
+
+        AttachmentDto attachment = attachmentService.confirmUpload(attachmentId, confirmRequest);
+
+        return ResponseEntity.ok(new ApiResponse<>(true, attachment));
+    }
+
+    @GetMapping("/{compId}/attachments/{attachmentId}")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
+    public ResponseEntity<ApiResponse<AttachmentDto>> getAttachment(
+            @PathVariable Long compId,
+            @PathVariable Long attachmentId,
+            Authentication authentication) {
+
+        CompOffRequest compOffRequest = compOffRequestRepository.findById(compId)
+                .orElseThrow(() -> new ResourceNotFoundException("CompOffRequest", compId));
+
+        // Check access permissions
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") &&
+                !compOffRequest.getUser().getId().equals(currentUser.getId())) {
+            throw new SecurityException("You can only view attachments for your own comp-off requests");
+        }
+
+        AttachmentDto attachment = attachmentService.getAttachment(attachmentId);
+
+        return ResponseEntity.ok(new ApiResponse<>(true, attachment));
     }
 }

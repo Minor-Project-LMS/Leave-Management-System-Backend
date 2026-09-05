@@ -19,11 +19,11 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.math.BigDecimal;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
@@ -40,6 +40,7 @@ public class LeaveRequestsController {
     private final LeaveLedgerRepository leaveLedgerRepository;
     private final NotificationQueueRepository notificationQueueRepository;
     private final LeavePolicyRepository leavePolicyRepository;
+    private final com.lms.Leave_Management_System_Backend.service.AttachmentService attachmentService;
 
     // In-memory comment storage
     private static final Map<Long, List<CommentDto>> commentStorage = new ConcurrentHashMap<>();
@@ -52,7 +53,8 @@ public class LeaveRequestsController {
             ApprovalDelegationRepository delegationRepository,
             LeaveLedgerRepository leaveLedgerRepository,
             NotificationQueueRepository notificationQueueRepository,
-            LeavePolicyRepository leavePolicyRepository) {
+            LeavePolicyRepository leavePolicyRepository,
+            com.lms.Leave_Management_System_Backend.service.AttachmentService attachmentService) {
         this.leaveRequestRepository = leaveRequestRepository;
         this.userRepository = userRepository;
         this.leaveCategoryRepository = leaveCategoryRepository;
@@ -61,6 +63,7 @@ public class LeaveRequestsController {
         this.leaveLedgerRepository = leaveLedgerRepository;
         this.notificationQueueRepository = notificationQueueRepository;
         this.leavePolicyRepository = leavePolicyRepository;
+        this.attachmentService = attachmentService;
     }
 
     @PostMapping
@@ -711,5 +714,119 @@ public class LeaveRequestsController {
         dto.setStatus(request.getStatus() != null ? request.getStatus().name() : null);
         dto.setAppliedAt(request.getAppliedAt());
         return dto;
+    }
+
+    // ============================================================
+    // ATTACHMENT ENDPOINTS
+    // ============================================================
+
+    @GetMapping("/{requestId}/attachments")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
+    public ResponseEntity<List<AttachmentDto>> getAttachments(
+            @PathVariable Long requestId,
+            Authentication authentication) {
+
+        LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
+                .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
+
+        // Check access permissions
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") &&
+                !leaveRequest.getUser().getId().equals(currentUser.getId())) {
+            throw new SecurityException("You can only view attachments for your own leave requests");
+        }
+
+        List<AttachmentDto> attachments = attachmentService.listAttachments(
+                com.lms.Leave_Management_System_Backend.model.Attachment.EntityType.LEAVE_REQUEST,
+                requestId
+        );
+
+        return ResponseEntity.ok(attachments);
+    }
+
+    @PostMapping("/{requestId}/attachments/init-upload")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
+    public ResponseEntity<ApiResponse<AttachmentInitUploadResponse>> initAttachmentUpload(
+            @PathVariable Long requestId,
+            @Valid @RequestBody AttachmentInitUploadRequest request,
+            Authentication authentication) {
+
+        LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
+                .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
+
+        // Check access permissions - only the request owner can upload
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        if (!leaveRequest.getUser().getId().equals(currentUser.getId())) {
+            throw new SecurityException("You can only upload attachments to your own leave requests");
+        }
+
+        AttachmentInitUploadResponse response = attachmentService.initializeUpload(
+                com.lms.Leave_Management_System_Backend.model.Attachment.EntityType.LEAVE_REQUEST,
+                requestId,
+                request,
+                currentUser.getId()
+        );
+
+        return ResponseEntity.status(201).body(new ApiResponse<>(true, response));
+    }
+
+    @PostMapping("/{requestId}/attachments/{attachmentId}/confirm")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
+    public ResponseEntity<ApiResponse<AttachmentDto>> confirmAttachmentUpload(
+            @PathVariable Long requestId,
+            @PathVariable Long attachmentId,
+            @RequestBody(required = false) AttachmentConfirmRequest confirmRequest,
+            Authentication authentication) {
+
+        LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
+                .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
+
+        // Check access permissions - only the request owner can confirm
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        if (!leaveRequest.getUser().getId().equals(currentUser.getId())) {
+            throw new SecurityException("You can only confirm attachments for your own leave requests");
+        }
+
+        AttachmentDto attachment = attachmentService.confirmUpload(attachmentId, confirmRequest);
+
+        return ResponseEntity.ok(new ApiResponse<>(true, attachment));
+    }
+
+    @GetMapping("/{requestId}/attachments/{attachmentId}")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
+    public ResponseEntity<ApiResponse<AttachmentDto>> getAttachment(
+            @PathVariable Long requestId,
+            @PathVariable Long attachmentId,
+            Authentication authentication) {
+
+        LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
+                .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
+
+        // Check access permissions
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") &&
+                !leaveRequest.getUser().getId().equals(currentUser.getId())) {
+            throw new SecurityException("You can only view attachments for your own leave requests");
+        }
+
+        AttachmentDto attachment = attachmentService.getAttachment(attachmentId);
+
+        return ResponseEntity.ok(new ApiResponse<>(true, attachment));
     }
 }
