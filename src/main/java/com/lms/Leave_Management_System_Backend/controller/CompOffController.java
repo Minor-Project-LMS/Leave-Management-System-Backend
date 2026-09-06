@@ -445,6 +445,8 @@ public class CompOffController {
 
     private void createNotification(User user, String type, String title, String message, String entityType, Long entityId) {
         try {
+            System.out.println("Creating notification for user: " + user.getEmail() + " type: " + type);
+            
             // Create notification for IN_APP channel
             NotificationQueue inAppNotification = new NotificationQueue();
             inAppNotification.setUser(user);
@@ -457,9 +459,9 @@ public class CompOffController {
             inAppNotification.setCreatedAt(LocalDateTime.now());
             inAppNotification.setIsRead(false);
             notificationQueueRepository.save(inAppNotification);
+            System.out.println("IN_APP notification created with ID: " + inAppNotification.getId());
 
-            // Create notification for EMAIL channel (if user has email preferences enabled)
-            // Note: Email sending would be handled by a separate scheduled job that processes QUEUED notifications
+            // Create notification for EMAIL channel
             NotificationQueue emailNotification = new NotificationQueue();
             emailNotification.setUser(user);
             emailNotification.setChannel(NotificationQueue.Channel.EMAIL);
@@ -470,10 +472,12 @@ public class CompOffController {
             emailNotification.setStatus(NotificationQueue.NotificationStatus.QUEUED);
             emailNotification.setCreatedAt(LocalDateTime.now());
             notificationQueueRepository.save(emailNotification);
+            System.out.println("EMAIL notification created with ID: " + emailNotification.getId());
 
         } catch (Exception e) {
             // Log error but don't fail the main operation
             System.err.println("Failed to create notification: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 }

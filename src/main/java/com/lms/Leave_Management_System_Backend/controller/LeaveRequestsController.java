@@ -131,6 +131,8 @@ public class LeaveRequestsController {
         leaveRequest.setAppliedAt(LocalDateTime.now());
 
         LeaveRequest saved = leaveRequestRepository.save(leaveRequest);
+        
+        // Send notification to employee
         createNotification(
                 saved.getUser(),
                 "LEAVE_SUBMITTED",
@@ -139,6 +141,19 @@ public class LeaveRequestsController {
                 "LEAVE_REQUEST",
                 saved.getId()
         );
+        
+        // Send notification to manager for approval
+        if (saved.getCurrentApprover() != null) {
+            createNotification(
+                    saved.getCurrentApprover(),
+                    "LEAVE_APPROVAL_PENDING",
+                    "Leave Approval Required",
+                    "A leave request from " + saved.getUser().getName() + " for " + saved.getTotalDays() + " day(s) requires your approval.",
+                    "LEAVE_APPROVAL",
+                    saved.getId()
+            );
+        }
+        
         LeaveRequestDto dto = toLeaveRequestDto(saved);
 
         return ResponseEntity.status(201).body(new ApiResponse<LeaveRequestDto>(true, dto));
@@ -729,6 +744,8 @@ public class LeaveRequestsController {
 
     private void createNotification(User user, String type, String title, String message, String entityType, Long entityId) {
         try {
+            System.out.println("Creating notification for user: " + user.getEmail() + " type: " + type);
+            
             // Create notification for IN_APP channel
             NotificationQueue inAppNotification = new NotificationQueue();
             inAppNotification.setUser(user);
@@ -739,11 +756,12 @@ public class LeaveRequestsController {
             inAppNotification.setRelatedEntityId(entityId);
             inAppNotification.setStatus(NotificationQueue.NotificationStatus.QUEUED);
             inAppNotification.setCreatedAt(LocalDateTime.now());
+            inAppNotification.setScheduledAt(LocalDateTime.now());
             inAppNotification.setIsRead(false);
             notificationQueueRepository.save(inAppNotification);
+            System.out.println("IN_APP notification created with ID: " + inAppNotification.getId());
 
-            // Create notification for EMAIL channel (if user has email preferences enabled)
-            // Note: Email sending would be handled by a separate scheduled job that processes QUEUED notifications
+            // Create notification for EMAIL channel
             NotificationQueue emailNotification = new NotificationQueue();
             emailNotification.setUser(user);
             emailNotification.setChannel(NotificationQueue.Channel.EMAIL);
@@ -753,11 +771,14 @@ public class LeaveRequestsController {
             emailNotification.setRelatedEntityId(entityId);
             emailNotification.setStatus(NotificationQueue.NotificationStatus.QUEUED);
             emailNotification.setCreatedAt(LocalDateTime.now());
+            emailNotification.setScheduledAt(LocalDateTime.now());
             notificationQueueRepository.save(emailNotification);
+            System.out.println("EMAIL notification created with ID: " + emailNotification.getId());
 
         } catch (Exception e) {
             // Log error but don't fail the main operation
             System.err.println("Failed to create notification: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 

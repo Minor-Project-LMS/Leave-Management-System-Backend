@@ -6,11 +6,13 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication(exclude = {
 		UserDetailsServiceAutoConfiguration.class
 })
 @EnableJpaRepositories(basePackages = "com.lms.Leave_Management_System_Backend.repository")
+@EnableScheduling
 public class LeaveManagementSystemBackendApplication {
 
 	private static final Logger log = LoggerFactory.getLogger(LeaveManagementSystemBackendApplication.class);
