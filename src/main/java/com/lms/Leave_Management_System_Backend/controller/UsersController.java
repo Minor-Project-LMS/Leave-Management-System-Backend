@@ -2,6 +2,7 @@ package com.lms.Leave_Management_System_Backend.controller;
 
 import com.lms.Leave_Management_System_Backend.dto.*;
 import com.lms.Leave_Management_System_Backend.exception.ResourceNotFoundException;
+import com.lms.Leave_Management_System_Backend.exception.SecurityException;
 import com.lms.Leave_Management_System_Backend.model.User;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
@@ -36,10 +37,11 @@ public class UsersController {
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
     public ResponseEntity<ApiResponse<UserDto>> getMyProfile(Authentication authentication) {
         String email = authentication.getName();
-        userRepository.findByEmailIgnoreCase(email)
+        User user = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
         
         UserDto userDto = authService.getUserByEmail(email);
+        // Avatar URL is already resolved by authService.getUserByEmail using the centralized resolver
         return ResponseEntity.ok(new ApiResponse<UserDto>(true, userDto));
     }
 
@@ -70,8 +72,7 @@ public class UsersController {
         userRepository.save(user);
         
         UserDto userDto = authService.getUserByEmail(email);
-        // Set avatar URL directly from user entity
-        userDto.setAvatarUrl(user.getAvatarUrl());
+        // Avatar URL is already resolved by authService.getUserByEmail using the centralized resolver
         return ResponseEntity.ok(new ApiResponse<UserDto>(true, userDto));
     }
 
@@ -107,6 +108,43 @@ public class UsersController {
     // ============================================================
     // AVATAR UPLOAD ENDPOINTS (Direct-to-Storage)
     // ============================================================
+
+    @GetMapping("/me/avatar")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional(readOnly = true)
+    public ResponseEntity<ApiResponse<AvatarResponse>> getMyAvatar(Authentication authentication) {
+        String email = authentication.getName();
+        User user = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        String resolvedAvatarUrl = attachmentService.resolveAvatarUrl(user.getId());
+        return ResponseEntity.ok(new ApiResponse<AvatarResponse>(true, new AvatarResponse(resolvedAvatarUrl)));
+    }
+
+    @GetMapping("/{userId}/avatar")
+    @RequireRole({"MANAGER", "HR_ADMIN"})
+    @Transactional(readOnly = true)
+    public ResponseEntity<ApiResponse<AvatarResponse>> getUserAvatar(
+            @PathVariable Long userId,
+            Authentication authentication) {
+        
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        User targetUser = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User", userId));
+
+        // Authorization check: managers can only view avatars of their direct reports
+        if (currentUser.getRole().getRoleCode().equals("MANAGER")) {
+            if (targetUser.getReportsTo() == null || !targetUser.getReportsTo().getId().equals(currentUser.getId())) {
+                throw new SecurityException("You can only view avatars of your direct reports");
+            }
+        }
+
+        String resolvedAvatarUrl = attachmentService.resolveAvatarUrl(targetUser.getId());
+        return ResponseEntity.ok(new ApiResponse<AvatarResponse>(true, new AvatarResponse(resolvedAvatarUrl)));
+    }
 
     @PostMapping("/me/avatar/init-upload")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
@@ -146,12 +184,13 @@ public class UsersController {
         // Get a fresh download URL for the confirmed attachment
         AttachmentDto attachmentWithUrl = attachmentService.getAttachment(attachmentId);
 
-        // Update user's avatar attachment ID and URL
-        // NOTE: avatarAttachmentId not in database - pending migration
-        // user.setAvatarAttachmentId(attachmentId);
+        // Update user's avatar URL as fallback (primary source is now attachments table)
         user.setAvatarUrl(attachmentWithUrl.getDownloadUrl());
         userRepository.save(user);
 
-        return ResponseEntity.ok(new ApiResponse<AvatarResponse>(true, new AvatarResponse(attachmentWithUrl.getDownloadUrl())));
+        // Use the resolveAvatarUrl function to get the properly resolved avatar URL
+        String resolvedAvatarUrl = attachmentService.resolveAvatarUrl(user.getId());
+
+        return ResponseEntity.ok(new ApiResponse<AvatarResponse>(true, new AvatarResponse(resolvedAvatarUrl)));
     }
 }

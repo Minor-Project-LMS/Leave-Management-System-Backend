@@ -18,6 +18,8 @@ public class LeaveRequestDto {
     private String status;
     private Long currentApproverId;
     private String currentApproverName;
+    private String currentApproverAvatarUrl;
+    private String userAvatarUrl;
     private LocalDateTime appliedAt;
 
     public LeaveRequestDto() {
@@ -125,6 +127,22 @@ public class LeaveRequestDto {
 
     public void setCurrentApproverName(String currentApproverName) {
         this.currentApproverName = currentApproverName;
+    }
+
+    public String getCurrentApproverAvatarUrl() {
+        return currentApproverAvatarUrl;
+    }
+
+    public void setCurrentApproverAvatarUrl(String currentApproverAvatarUrl) {
+        this.currentApproverAvatarUrl = currentApproverAvatarUrl;
+    }
+
+    public String getUserAvatarUrl() {
+        return userAvatarUrl;
+    }
+
+    public void setUserAvatarUrl(String userAvatarUrl) {
+        this.userAvatarUrl = userAvatarUrl;
     }
 
     public LocalDateTime getAppliedAt() {

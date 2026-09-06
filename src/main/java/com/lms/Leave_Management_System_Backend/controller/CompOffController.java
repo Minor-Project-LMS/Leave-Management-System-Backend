@@ -245,6 +245,8 @@ public class CompOffController {
         
         dto.setUserId(request.getUser().getId().intValue());
         dto.setEmployeeName(request.getUser().getName());
+        // Resolve user avatar URL
+        dto.setUserAvatarUrl(attachmentService.resolveAvatarUrl(request.getUser().getId()));
         
         dto.setWorkedOn(request.getWorkedOn());
         dto.setReason(request.getReason());
@@ -255,6 +257,8 @@ public class CompOffController {
         if (request.getApprover() != null) {
             dto.setApproverId(request.getApprover().getId().intValue());
             dto.setApproverName(request.getApprover().getName());
+            // Resolve approver avatar URL
+            dto.setApproverAvatarUrl(attachmentService.resolveAvatarUrl(request.getApprover().getId()));
         }
         
         dto.setCreatedAt(request.getCreatedAt());
@@ -283,6 +287,14 @@ public class CompOffController {
         if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") &&
                 !compOffRequest.getUser().getId().equals(currentUser.getId())) {
             throw new SecurityException("You can only view attachments for your own comp-off requests");
+        }
+
+        // For managers, verify they are the current approver
+        if (currentUser.getRole().getRoleCode().equals("MANAGER")) {
+            if (compOffRequest.getApprover() == null || 
+                !compOffRequest.getApprover().getId().equals(currentUser.getId())) {
+                throw new SecurityException("You can only view attachments for requests where you are the approver");
+            }
         }
 
         List<AttachmentDto> attachments = attachmentService.listAttachments(
@@ -368,6 +380,14 @@ public class CompOffController {
         if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") &&
                 !compOffRequest.getUser().getId().equals(currentUser.getId())) {
             throw new SecurityException("You can only view attachments for your own comp-off requests");
+        }
+
+        // For managers, verify they are the current approver
+        if (currentUser.getRole().getRoleCode().equals("MANAGER")) {
+            if (compOffRequest.getApprover() == null || 
+                !compOffRequest.getApprover().getId().equals(currentUser.getId())) {
+                throw new SecurityException("You can only view attachments for requests where you are the approver");
+            }
         }
 
         AttachmentDto attachment = attachmentService.getAttachment(attachmentId);

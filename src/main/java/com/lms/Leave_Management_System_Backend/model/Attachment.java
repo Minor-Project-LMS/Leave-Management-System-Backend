@@ -62,7 +62,8 @@ public class Attachment {
 
     public enum UploadStatus {
         PENDING,
-        ACTIVE
+        ACTIVE,
+        REPLACED
     }
 
     public Attachment() {

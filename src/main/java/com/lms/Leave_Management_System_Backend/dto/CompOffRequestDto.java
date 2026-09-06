@@ -15,6 +15,8 @@ public class CompOffRequestDto {
     private String status;
     private Integer approverId;
     private String approverName;
+    private String approverAvatarUrl;
+    private String userAvatarUrl;
     private LocalDateTime createdAt;
 
     // Constructors
@@ -107,6 +109,22 @@ public class CompOffRequestDto {
 
     public void setApproverName(String approverName) {
         this.approverName = approverName;
+    }
+
+    public String getApproverAvatarUrl() {
+        return approverAvatarUrl;
+    }
+
+    public void setApproverAvatarUrl(String approverAvatarUrl) {
+        this.approverAvatarUrl = approverAvatarUrl;
+    }
+
+    public String getUserAvatarUrl() {
+        return userAvatarUrl;
+    }
+
+    public void setUserAvatarUrl(String userAvatarUrl) {
+        this.userAvatarUrl = userAvatarUrl;
     }
 
     public LocalDateTime getCreatedAt() {

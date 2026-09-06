@@ -632,6 +632,8 @@ public class LeaveRequestsController {
         dto.setRequestId(approval.getRequest().getId().intValue());
         dto.setApproverId(approval.getApprover().getId().intValue());
         dto.setApproverName(approval.getApprover().getName());
+        // Resolve approver avatar URL
+        dto.setApproverAvatarUrl(attachmentService.resolveAvatarUrl(approval.getApprover().getId()));
         dto.setActingAsDelegateFor(null);
         dto.setLevel(approval.getLevel().intValue());
         dto.setDecision(approval.getDecision().name());
@@ -735,6 +737,8 @@ public class LeaveRequestsController {
         if (request.getUser() != null) {
             dto.setUserId(request.getUser().getId());
             dto.setUserName(request.getUser().getName());
+            // Resolve user avatar URL
+            dto.setUserAvatarUrl(attachmentService.resolveAvatarUrl(request.getUser().getId()));
         }
         if (request.getCategory() != null) {
             dto.setCategoryId(request.getCategory().getId());
@@ -749,6 +753,8 @@ public class LeaveRequestsController {
         if (request.getCurrentApprover() != null) {
             dto.setCurrentApproverId(request.getCurrentApprover().getId());
             dto.setCurrentApproverName(request.getCurrentApprover().getName());
+            // Resolve current approver avatar URL
+            dto.setCurrentApproverAvatarUrl(attachmentService.resolveAvatarUrl(request.getCurrentApprover().getId()));
         }
         dto.setAppliedAt(request.getAppliedAt());
         return dto;
@@ -776,6 +782,14 @@ public class LeaveRequestsController {
         if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") &&
                 !leaveRequest.getUser().getId().equals(currentUser.getId())) {
             throw new SecurityException("You can only view attachments for your own leave requests");
+        }
+
+        // For managers, verify they are the current approver (or delegated approver)
+        if (currentUser.getRole().getRoleCode().equals("MANAGER")) {
+            if (leaveRequest.getCurrentApprover() == null || 
+                !leaveRequest.getCurrentApprover().getId().equals(currentUser.getId())) {
+                throw new SecurityException("You can only view attachments for requests where you are the current approver");
+            }
         }
 
         List<AttachmentDto> attachments = attachmentService.listAttachments(
@@ -861,6 +875,14 @@ public class LeaveRequestsController {
         if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") &&
                 !leaveRequest.getUser().getId().equals(currentUser.getId())) {
             throw new SecurityException("You can only view attachments for your own leave requests");
+        }
+
+        // For managers, verify they are the current approver (or delegated approver)
+        if (currentUser.getRole().getRoleCode().equals("MANAGER")) {
+            if (leaveRequest.getCurrentApprover() == null || 
+                !leaveRequest.getCurrentApprover().getId().equals(currentUser.getId())) {
+                throw new SecurityException("You can only view attachments for requests where you are the current approver");
+            }
         }
 
         AttachmentDto attachment = attachmentService.getAttachment(attachmentId);

@@ -7,6 +7,7 @@ import com.lms.Leave_Management_System_Backend.model.User;
 import com.lms.Leave_Management_System_Backend.repository.ApprovalDelegationRepository;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
+import com.lms.Leave_Management_System_Backend.service.AttachmentService;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -25,10 +26,12 @@ public class DelegationsController {
 
     private final ApprovalDelegationRepository delegationRepository;
     private final UserRepository userRepository;
+    private final AttachmentService attachmentService;
 
-    public DelegationsController(ApprovalDelegationRepository delegationRepository, UserRepository userRepository) {
+    public DelegationsController(ApprovalDelegationRepository delegationRepository, UserRepository userRepository, AttachmentService attachmentService) {
         this.delegationRepository = delegationRepository;
         this.userRepository = userRepository;
+        this.attachmentService = attachmentService;
     }
 
     @GetMapping("/eligible-delegates")
@@ -60,6 +63,8 @@ public class DelegationsController {
         dto.setName(user.getName());
         dto.setDesignation(user.getDesignation());
         dto.setRole(user.getRole().getRoleCode());
+        // Use the centralized avatar resolver
+        dto.setAvatarUrl(attachmentService.resolveAvatarUrl(user.getId()));
         return dto;
     }
 
@@ -208,11 +213,13 @@ public class DelegationsController {
         UserDto delegatorDto = new UserDto();
         delegatorDto.setId(delegation.getDelegator().getId());
         delegatorDto.setName(delegation.getDelegator().getName());
+        delegatorDto.setAvatarUrl(attachmentService.resolveAvatarUrl(delegation.getDelegator().getId()));
         dto.setDelegator(delegatorDto);
 
         UserDto delegateDto = new UserDto();
         delegateDto.setId(delegation.getDelegate().getId());
         delegateDto.setName(delegation.getDelegate().getName());
+        delegateDto.setAvatarUrl(attachmentService.resolveAvatarUrl(delegation.getDelegate().getId()));
         dto.setDelegate(delegateDto);
 
         dto.setStartDate(delegation.getStartDate());

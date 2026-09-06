@@ -4,8 +4,10 @@ import com.lms.Leave_Management_System_Backend.dto.*;
 import com.lms.Leave_Management_System_Backend.exception.BusinessRuleException;
 import com.lms.Leave_Management_System_Backend.exception.ResourceNotFoundException;
 import com.lms.Leave_Management_System_Backend.model.Attachment;
+import com.lms.Leave_Management_System_Backend.model.AuditTrail;
 import com.lms.Leave_Management_System_Backend.model.User;
 import com.lms.Leave_Management_System_Backend.repository.AttachmentRepository;
+import com.lms.Leave_Management_System_Backend.repository.AuditTrailRepository;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,8 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
@@ -26,14 +27,17 @@ public class AttachmentService {
     private final AttachmentRepository attachmentRepository;
     private final UserRepository userRepository;
     private final StorageService storageService;
+    private final AuditTrailRepository auditTrailRepository;
 
     public AttachmentService(
             AttachmentRepository attachmentRepository,
             UserRepository userRepository,
-            StorageService storageService) {
+            StorageService storageService,
+            AuditTrailRepository auditTrailRepository) {
         this.attachmentRepository = attachmentRepository;
         this.userRepository = userRepository;
         this.storageService = storageService;
+        this.auditTrailRepository = auditTrailRepository;
     }
 
     /**
@@ -145,6 +149,12 @@ public class AttachmentService {
         // For user avatars, retire old active avatars
         if (attachment.getEntityType() == Attachment.EntityType.USER_AVATAR) {
             retireOldAvatars(attachment.getEntityId(), attachmentId);
+            
+            // Write audit trail entry for avatar update
+            writeAuditTrailForAvatarUpdate(attachment);
+        } else {
+            // Write audit trail entry for attachment upload
+            writeAuditTrailForAttachmentUpload(attachment);
         }
 
         // Flip status to ACTIVE
@@ -242,18 +252,129 @@ public class AttachmentService {
 
     /**
      * Helper method to retire old avatars when a new one is set
+     * Updates old ACTIVE avatars to REPLACED status instead of deleting them
      */
     private void retireOldAvatars(Long userId, Long newAttachmentId) {
         List<Attachment> oldAvatars = attachmentRepository.findOtherActiveAvatars(userId, newAttachmentId);
         
         for (Attachment oldAvatar : oldAvatars) {
-            // We could either delete them completely or mark them as superseded
-            // For now, let's delete them from storage and database
-            if (storageService.isConfigured()) {
-                storageService.deleteObject(oldAvatar.getStorageKey());
+            // Mark old avatar as REPLACED instead of deleting it
+            // This preserves history and maintains audit trail integrity
+            oldAvatar.setUploadStatus(Attachment.UploadStatus.REPLACED);
+            attachmentRepository.save(oldAvatar);
+            log.info("Retired old avatar attachment ID: {} for user ID: {} (marked as REPLACED)", oldAvatar.getId(), userId);
+        }
+    }
+
+    /**
+     * Resolve avatar URL for a user
+     * This is the core avatar resolver used throughout the application
+     */
+    @Transactional(readOnly = true)
+    public String resolveAvatarUrl(Long userId) {
+        if (userId == null) {
+            return getDefaultAvatarUrl();
+        }
+
+        // Step 1: Look up active avatar attachment for the user
+        Optional<Attachment> activeAvatar = attachmentRepository.findActiveAvatarByUserId(userId);
+        
+        if (activeAvatar.isPresent()) {
+            Attachment attachment = activeAvatar.get();
+            // Step 2: Build URL from storage_bucket and storage_key
+            // Generate signed URL for private buckets
+            try {
+                String downloadUrl = storageService.generatePresignedGetUrl(attachment.getStorageKey());
+                log.debug("Resolved avatar URL from attachment for user ID: {}", userId);
+                return downloadUrl;
+            } catch (Exception e) {
+                log.warn("Failed to generate signed URL for avatar attachment ID: {}, falling back to default", attachment.getId(), e);
+                return getDefaultAvatarUrl();
             }
-            attachmentRepository.delete(oldAvatar);
-            log.info("Retired old avatar attachment ID: {} for user ID: {}", oldAvatar.getId(), userId);
+        }
+
+        // Step 3: Fall back to app_users.avatar_url
+        try {
+            User user = userRepository.findById(userId).orElse(null);
+            if (user != null && user.getAvatarUrl() != null && !user.getAvatarUrl().trim().isEmpty()) {
+                log.debug("Resolved avatar URL from user.avatar_url for user ID: {}", userId);
+                return user.getAvatarUrl();
+            }
+        } catch (Exception e) {
+            log.warn("Failed to look up user for avatar URL fallback for user ID: {}", userId, e);
+        }
+
+        // Step 4: Return default placeholder avatar
+        log.debug("No avatar found for user ID: {}, using default", userId);
+        return getDefaultAvatarUrl();
+    }
+
+    /**
+     * Get default placeholder avatar URL
+     */
+    private String getDefaultAvatarUrl() {
+        // Return a default avatar placeholder
+        // This could be a relative path to a default image served by the frontend
+        // or a URL to a default avatar image in storage
+        return "/assets/images/default-avatar.png";
+    }
+
+    /**
+     * Write audit trail entry for avatar update
+     */
+    private void writeAuditTrailForAvatarUpdate(Attachment attachment) {
+        try {
+            AuditTrail auditTrail = new AuditTrail();
+            auditTrail.setEntityType("USER_AVATAR");
+            auditTrail.setEntityId(attachment.getEntityId());
+            auditTrail.setAction(AuditTrail.AuditAction.UPDATE);
+            auditTrail.setPerformedBy(attachment.getUploadedBy());
+            auditTrail.setBeforeState(null); // Could capture previous avatar state if needed
+            
+            // Create proper JSON string for after_state
+            String afterStateJson = String.format(
+                "{\"attachmentId\":%d,\"fileName\":\"%s\"}",
+                attachment.getId(),
+                attachment.getFileName().replace("\"", "\\\"")
+            );
+            auditTrail.setAfterState(afterStateJson);
+            
+            auditTrailRepository.save(auditTrail);
+            log.info("Audit trail entry created for avatar update: user ID {}, attachment ID {}", attachment.getEntityId(), attachment.getId());
+        } catch (Exception e) {
+            log.error("Failed to write audit trail entry for avatar update", e);
+            throw new BusinessRuleException("Failed to write audit trail entry for avatar update");
+            // Don't fail the operation if audit trail write fails
+        }
+    }
+
+    /**
+     * Write audit trail entry for attachment upload
+     */
+    private void writeAuditTrailForAttachmentUpload(Attachment attachment) {
+        try {
+            AuditTrail auditTrail = new AuditTrail();
+            auditTrail.setEntityType(attachment.getEntityType().name());
+            auditTrail.setEntityId(attachment.getEntityId());
+            auditTrail.setAction(AuditTrail.AuditAction.CREATE);
+            auditTrail.setPerformedBy(attachment.getUploadedBy());
+            auditTrail.setBeforeState(null);
+            
+            // Create proper JSON string for after_state
+            String afterStateJson = String.format(
+                "{\"attachmentId\":%d,\"fileName\":\"%s\",\"entityType\":\"%s\"}",
+                attachment.getId(),
+                attachment.getFileName().replace("\"", "\\\""),
+                attachment.getEntityType().name()
+            );
+            auditTrail.setAfterState(afterStateJson);
+            
+            auditTrailRepository.save(auditTrail);
+            log.info("Audit trail entry created for attachment upload: entity {}:{}, attachment ID {}", attachment.getEntityType(), attachment.getEntityId(), attachment.getId());
+        } catch (Exception e) {
+            log.error("Failed to write audit trail entry for attachment upload", e);
+            throw new BusinessRuleException("Failed to write audit trail entry for attachment upload");
+            // Don't fail the operation if audit trail write fails
         }
     }
 

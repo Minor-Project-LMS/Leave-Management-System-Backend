@@ -6,6 +6,7 @@ import com.lms.Leave_Management_System_Backend.exception.ResourceNotFoundExcepti
 import com.lms.Leave_Management_System_Backend.model.User;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
+import com.lms.Leave_Management_System_Backend.service.AttachmentService;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -26,9 +27,11 @@ import java.util.Map;
 public class EmployeesController {
 
     private final UserRepository userRepository;
+    private final AttachmentService attachmentService;
 
-    public EmployeesController(UserRepository userRepository) {
+    public EmployeesController(UserRepository userRepository, AttachmentService attachmentService) {
         this.userRepository = userRepository;
+        this.attachmentService = attachmentService;
     }
 
     @GetMapping
@@ -344,6 +347,9 @@ public class EmployeesController {
         dto.setWorkLocation(user.getWorkLocation());
         dto.setEmploymentType(user.getEmploymentType());
         dto.setDateOfJoining(user.getDateOfJoining());
+        
+        // Use the centralized avatar resolver
+        dto.setAvatarUrl(attachmentService.resolveAvatarUrl(user.getId()));
         
         if (user.getReportsTo() != null) {
             dto.setReportsToId(user.getReportsTo().getId());
