@@ -5,10 +5,12 @@ import com.lms.Leave_Management_System_Backend.exception.ConflictException;
 import com.lms.Leave_Management_System_Backend.exception.ResourceNotFoundException;
 import com.lms.Leave_Management_System_Backend.exception.SecurityException;
 import com.lms.Leave_Management_System_Backend.model.CompOffRequest;
+import com.lms.Leave_Management_System_Backend.model.NotificationQueue;
 import com.lms.Leave_Management_System_Backend.model.User;
 import com.lms.Leave_Management_System_Backend.repository.CompOffRequestRepository;
 import com.lms.Leave_Management_System_Backend.repository.LeaveCategoryRepository;
 import com.lms.Leave_Management_System_Backend.repository.LeaveLedgerRepository;
+import com.lms.Leave_Management_System_Backend.repository.NotificationQueueRepository;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
 import com.lms.Leave_Management_System_Backend.service.AttachmentService;
@@ -36,6 +38,7 @@ public class CompOffController {
     private final UserRepository userRepository;
     private final LeaveLedgerRepository leaveLedgerRepository;
     private final LeaveCategoryRepository leaveCategoryRepository;
+    private final NotificationQueueRepository notificationQueueRepository;
     private final AttachmentService attachmentService;
 
     public CompOffController(
@@ -43,11 +46,13 @@ public class CompOffController {
             UserRepository userRepository,
             LeaveLedgerRepository leaveLedgerRepository,
             LeaveCategoryRepository leaveCategoryRepository,
+            NotificationQueueRepository notificationQueueRepository,
             AttachmentService attachmentService) {
         this.compOffRequestRepository = compOffRequestRepository;
         this.userRepository = userRepository;
         this.leaveLedgerRepository = leaveLedgerRepository;
         this.leaveCategoryRepository = leaveCategoryRepository;
+        this.notificationQueueRepository = notificationQueueRepository;
         this.attachmentService = attachmentService;
     }
 
@@ -86,6 +91,29 @@ public class CompOffController {
         }
 
         CompOffRequest saved = compOffRequestRepository.save(compOffRequest);
+        
+        // Create notification for the user
+        createNotification(
+                saved.getUser(),
+                "COMP_OFF_SUBMITTED",
+                "Comp-Off Request Submitted",
+                "Your comp-off request for " + saved.getWorkedOn() + " has been submitted.",
+                "COMP_OFF_REQUEST",
+                saved.getId()
+        );
+        
+        // Create notification for the approver if exists
+        if (saved.getApprover() != null) {
+            createNotification(
+                    saved.getApprover(),
+                    "COMP_OFF_APPROVAL_PENDING",
+                    "Comp-Off Approval Required",
+                    "A comp-off request from " + saved.getUser().getName() + " requires your approval.",
+                    "COMP_OFF_APPROVAL",
+                    saved.getId()
+            );
+        }
+        
         CompOffRequestDto dto = toCompOffRequestDto(saved);
         
         return ResponseEntity.status(201).body(dto);
@@ -196,9 +224,29 @@ public class CompOffController {
             // 2. Find or create the ledger entry for the user/year/category
             // 3. Update accrued and closing_balance
             
+            // Create notification for the user
+            createNotification(
+                    request.getUser(),
+                    "COMP_OFF_APPROVED",
+                    "Comp-Off Request Approved",
+                    "Your comp-off request for " + request.getWorkedOn() + " has been approved.",
+                    "COMP_OFF_APPROVAL",
+                    request.getId()
+            );
+            
         } else if ("REJECTED".equals(decisionRequest.getDecision())) {
             request.setStatus(CompOffRequest.RequestStatus.REJECTED);
             request.setApprover(approver);
+            
+            // Create notification for the user
+            createNotification(
+                    request.getUser(),
+                    "COMP_OFF_REJECTED",
+                    "Comp-Off Request Rejected",
+                    "Your comp-off request for " + request.getWorkedOn() + " has been rejected.",
+                    "COMP_OFF_APPROVAL",
+                    request.getId()
+            );
         }
 
         CompOffRequest saved = compOffRequestRepository.save(request);
@@ -393,5 +441,39 @@ public class CompOffController {
         AttachmentDto attachment = attachmentService.getAttachment(attachmentId);
 
         return ResponseEntity.ok(new ApiResponse<>(true, attachment));
+    }
+
+    private void createNotification(User user, String type, String title, String message, String entityType, Long entityId) {
+        try {
+            // Create notification for IN_APP channel
+            NotificationQueue inAppNotification = new NotificationQueue();
+            inAppNotification.setUser(user);
+            inAppNotification.setChannel(NotificationQueue.Channel.IN_APP);
+            inAppNotification.setTemplateCode(type);
+            inAppNotification.setPayload("{\"title\":\"" + title + "\",\"message\":\"" + message + "\"}");
+            inAppNotification.setRelatedEntityType(entityType);
+            inAppNotification.setRelatedEntityId(entityId);
+            inAppNotification.setStatus(NotificationQueue.NotificationStatus.QUEUED);
+            inAppNotification.setCreatedAt(LocalDateTime.now());
+            inAppNotification.setIsRead(false);
+            notificationQueueRepository.save(inAppNotification);
+
+            // Create notification for EMAIL channel (if user has email preferences enabled)
+            // Note: Email sending would be handled by a separate scheduled job that processes QUEUED notifications
+            NotificationQueue emailNotification = new NotificationQueue();
+            emailNotification.setUser(user);
+            emailNotification.setChannel(NotificationQueue.Channel.EMAIL);
+            emailNotification.setTemplateCode(type);
+            emailNotification.setPayload("{\"title\":\"" + title + "\",\"message\":\"" + message + "\"}");
+            emailNotification.setRelatedEntityType(entityType);
+            emailNotification.setRelatedEntityId(entityId);
+            emailNotification.setStatus(NotificationQueue.NotificationStatus.QUEUED);
+            emailNotification.setCreatedAt(LocalDateTime.now());
+            notificationQueueRepository.save(emailNotification);
+
+        } catch (Exception e) {
+            // Log error but don't fail the main operation
+            System.err.println("Failed to create notification: " + e.getMessage());
+        }
     }
 }

@@ -728,7 +728,37 @@ public class LeaveRequestsController {
     }
 
     private void createNotification(User user, String type, String title, String message, String entityType, Long entityId) {
-        // Notification creation implementation
+        try {
+            // Create notification for IN_APP channel
+            NotificationQueue inAppNotification = new NotificationQueue();
+            inAppNotification.setUser(user);
+            inAppNotification.setChannel(NotificationQueue.Channel.IN_APP);
+            inAppNotification.setTemplateCode(type);
+            inAppNotification.setPayload("{\"title\":\"" + title + "\",\"message\":\"" + message + "\"}");
+            inAppNotification.setRelatedEntityType(entityType);
+            inAppNotification.setRelatedEntityId(entityId);
+            inAppNotification.setStatus(NotificationQueue.NotificationStatus.QUEUED);
+            inAppNotification.setCreatedAt(LocalDateTime.now());
+            inAppNotification.setIsRead(false);
+            notificationQueueRepository.save(inAppNotification);
+
+            // Create notification for EMAIL channel (if user has email preferences enabled)
+            // Note: Email sending would be handled by a separate scheduled job that processes QUEUED notifications
+            NotificationQueue emailNotification = new NotificationQueue();
+            emailNotification.setUser(user);
+            emailNotification.setChannel(NotificationQueue.Channel.EMAIL);
+            emailNotification.setTemplateCode(type);
+            emailNotification.setPayload("{\"title\":\"" + title + "\",\"message\":\"" + message + "\"}");
+            emailNotification.setRelatedEntityType(entityType);
+            emailNotification.setRelatedEntityId(entityId);
+            emailNotification.setStatus(NotificationQueue.NotificationStatus.QUEUED);
+            emailNotification.setCreatedAt(LocalDateTime.now());
+            notificationQueueRepository.save(emailNotification);
+
+        } catch (Exception e) {
+            // Log error but don't fail the main operation
+            System.err.println("Failed to create notification: " + e.getMessage());
+        }
     }
 
     private LeaveRequestDto toLeaveRequestDto(LeaveRequest request) {
