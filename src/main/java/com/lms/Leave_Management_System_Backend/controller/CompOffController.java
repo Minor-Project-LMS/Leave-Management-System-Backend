@@ -457,6 +457,7 @@ public class CompOffController {
             inAppNotification.setRelatedEntityId(entityId);
             inAppNotification.setStatus(NotificationQueue.NotificationStatus.QUEUED);
             inAppNotification.setCreatedAt(LocalDateTime.now());
+            inAppNotification.setScheduledAt(LocalDateTime.now());
             inAppNotification.setIsRead(false);
             notificationQueueRepository.save(inAppNotification);
             System.out.println("IN_APP notification created with ID: " + inAppNotification.getId());
@@ -471,6 +472,7 @@ public class CompOffController {
             emailNotification.setRelatedEntityId(entityId);
             emailNotification.setStatus(NotificationQueue.NotificationStatus.QUEUED);
             emailNotification.setCreatedAt(LocalDateTime.now());
+            emailNotification.setScheduledAt(LocalDateTime.now());
             notificationQueueRepository.save(emailNotification);
             System.out.println("EMAIL notification created with ID: " + emailNotification.getId());
 
