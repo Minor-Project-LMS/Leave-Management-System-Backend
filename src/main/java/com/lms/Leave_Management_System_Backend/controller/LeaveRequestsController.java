@@ -664,6 +664,41 @@ public class LeaveRequestsController {
         return ResponseEntity.ok(comments);
     }
 
+    @PostMapping("/{requestId}/comments")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
+    public ResponseEntity<CommentDto> addComment(
+            @PathVariable Long requestId,
+            @Valid @RequestBody CommentRequest commentRequest,
+            Authentication authentication) {
+
+        LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
+                .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
+
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") &&
+                !leaveRequest.getUser().getId().equals(currentUser.getId())) {
+            throw new SecurityException("You can only add comments to your own leave requests");
+        }
+
+        List<CommentDto> comments = commentStorage.computeIfAbsent(requestId, k -> new ArrayList<>());
+
+        CommentDto newComment = new CommentDto();
+        newComment.setId(comments.size() + 1);
+        newComment.setRequestId(requestId);
+        newComment.setAuthorId(currentUser.getId());
+        newComment.setAuthorName(currentUser.getName());
+        newComment.setMessage(commentRequest.getMessage());
+        newComment.setCreatedAt(LocalDateTime.now());
+
+        comments.add(newComment);
+
+        return ResponseEntity.status(201).body(newComment);
+    }
+
     /**
      * Helper method to validate continuous leave duration against policy limits
      */
@@ -711,6 +746,10 @@ public class LeaveRequestsController {
         dto.setTotalDays(request.getTotalDays());
         dto.setReason(request.getReason());
         dto.setStatus(request.getStatus() != null ? request.getStatus().name() : null);
+        if (request.getCurrentApprover() != null) {
+            dto.setCurrentApproverId(request.getCurrentApprover().getId());
+            dto.setCurrentApproverName(request.getCurrentApprover().getName());
+        }
         dto.setAppliedAt(request.getAppliedAt());
         return dto;
     }
