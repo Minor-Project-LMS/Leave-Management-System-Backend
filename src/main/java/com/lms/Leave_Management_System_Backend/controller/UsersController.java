@@ -40,7 +40,7 @@ public class UsersController {
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
         
         UserDto userDto = authService.getUserByEmail(email);
-        return ResponseEntity.ok(new ApiResponse<>(true, userDto));
+        return ResponseEntity.ok(new ApiResponse<UserDto>(true, userDto));
     }
 
     @PatchMapping("/me")
@@ -70,7 +70,9 @@ public class UsersController {
         userRepository.save(user);
         
         UserDto userDto = authService.getUserByEmail(email);
-        return ResponseEntity.ok(new ApiResponse<>(true, userDto));
+        // Set avatar URL directly from user entity
+        userDto.setAvatarUrl(user.getAvatarUrl());
+        return ResponseEntity.ok(new ApiResponse<UserDto>(true, userDto));
     }
 
     @PostMapping("/me/password")
@@ -96,7 +98,7 @@ public class UsersController {
         user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
         userRepository.save(user);
 
-        return ResponseEntity.ok(new ApiResponse<>(true, null));
+        return ResponseEntity.ok(new ApiResponse<UserDto>(true, null));
     }
 
     // Legacy multipart avatar upload removed - all avatar uploads now use pre-signed URL flow
@@ -124,7 +126,7 @@ public class UsersController {
                 user.getId()
         );
 
-        return ResponseEntity.status(201).body(new ApiResponse<>(true, response));
+        return ResponseEntity.status(201).body(new ApiResponse<AttachmentInitUploadResponse>(true, response));
     }
 
     @PostMapping("/me/avatar/{attachmentId}/confirm")
@@ -144,10 +146,12 @@ public class UsersController {
         // Get a fresh download URL for the confirmed attachment
         AttachmentDto attachmentWithUrl = attachmentService.getAttachment(attachmentId);
 
-        // Update user's avatar URL
+        // Update user's avatar attachment ID and URL
+        // NOTE: avatarAttachmentId not in database - pending migration
+        // user.setAvatarAttachmentId(attachmentId);
         user.setAvatarUrl(attachmentWithUrl.getDownloadUrl());
         userRepository.save(user);
 
-        return ResponseEntity.ok(new ApiResponse<>(true, new AvatarResponse(attachmentWithUrl.getDownloadUrl())));
+        return ResponseEntity.ok(new ApiResponse<AvatarResponse>(true, new AvatarResponse(attachmentWithUrl.getDownloadUrl())));
     }
 }

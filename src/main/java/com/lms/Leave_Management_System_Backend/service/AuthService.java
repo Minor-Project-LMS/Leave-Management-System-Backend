@@ -9,6 +9,8 @@ import com.lms.Leave_Management_System_Backend.model.User;
 import com.lms.Leave_Management_System_Backend.repository.DepartmentRepository;
 import com.lms.Leave_Management_System_Backend.repository.RoleRepository;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
+// import com.lms.Leave_Management_System_Backend.dto.AttachmentDto;
+// import com.lms.Leave_Management_System_Backend.service.AttachmentService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -32,6 +34,8 @@ public class AuthService {
     private final RoleRepository roleRepository;
     private final BCryptPasswordEncoder passwordEncoder;
     private final RedisTemplate<String, String> otpRedisTemplate;
+    // private final AttachmentService attachmentService;
+    // NOTE: attachmentService not used - avatarAttachmentId not in database
 
     private final Random random = new Random();
 
@@ -315,6 +319,13 @@ public class AuthService {
         }
         userDto.setDateOfJoining(user.getDateOfJoining());
         userDto.setEmploymentStatus(user.getEmploymentStatus().name());
+        
+        // Set avatar URL directly from user entity
+        userDto.setAvatarUrl(user.getAvatarUrl());
+        
+        // NOTE: avatarAttachmentId not in database - use avatarUrl directly
+        // Future migration will add avatar_attachment_id column
+        userDto.setAvatarAttachmentId(null);
 
         return userDto;
     }
