@@ -27,6 +27,9 @@ public interface UserRepository extends JpaRepository<User, Long> {
     @EntityGraph(attributePaths = {"role", "department", "reportsTo"})
     Optional<User> findByEmployeeCode(String employeeCode);
 
+    // Used when generating the next human-readable employee/manager code.
+    List<User> findByEmployeeCodeStartingWith(String prefix);
+
     @EntityGraph(attributePaths = {"role", "department", "reportsTo"})
     List<User> findByDepartmentId(Integer departmentId);
 
@@ -72,6 +75,28 @@ public interface UserRepository extends JpaRepository<User, Long> {
             @Param("isManager") boolean isManager,
             @Param("managerId") Long managerId,
             @Param("departmentId") Integer departmentId,
+            @Param("q") String q,
+            Pageable pageable);
+
+    // Employee Management directory (HR-01) — excludes HR_ADMIN so HR staff
+    // (e.g. Anita) don't show up mixed in with regular employees/managers,
+    // and does the department/designation/status/search filtering that
+    // EmployeesController previously stubbed out (every branch fell back to
+    // an unfiltered findAll(pageable)).
+    @EntityGraph(attributePaths = {"role", "department", "reportsTo"})
+    @Query("SELECT u FROM User u WHERE " +
+            "u.role.roleCode <> 'HR_ADMIN' AND " +
+            "(:departmentId IS NULL OR u.department.id = :departmentId) AND " +
+            "(CAST(:designation AS string) IS NULL OR LOWER(u.designation) = LOWER(CAST(:designation AS string))) AND " +
+            "(:status IS NULL OR u.employmentStatus = :status) AND " +
+            "(CAST(:q AS string) IS NULL OR " +
+            " LOWER(u.fullName) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')) OR " +
+            " LOWER(u.email) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')) OR " +
+            " LOWER(u.employeeCode) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))")
+    Page<User> findEmployeeDirectory(
+            @Param("departmentId") Integer departmentId,
+            @Param("designation") String designation,
+            @Param("status") User.EmploymentStatus status,
             @Param("q") String q,
             Pageable pageable);
 }

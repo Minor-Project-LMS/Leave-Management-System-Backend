@@ -36,15 +36,16 @@ public class LeaveCategoriesController {
         Page<LeaveCategory> categoriesPage = leaveCategoryRepository.findAll(pageable);
 
         List<LeaveCategory> categories = categoriesPage.getContent();
-        
-        // Filter by status if provided
-        if ("ACTIVE".equalsIgnoreCase(status)) {
+
+        // Filter by status if provided. `status` is a plain string column
+        // on the entity ("ACTIVE"/"INACTIVE") — the previous check
+        // (`getId() != null` / `getId() == null`) was checking the
+        // category's own primary key, which is never null for a persisted
+        // row, so the INACTIVE branch could never match anything and
+        // ACTIVE matched everything regardless of actual status.
+        if (status != null && !status.isBlank() && !"ALL".equalsIgnoreCase(status)) {
             categories = categories.stream()
-                    .filter(c -> c.getId() != null) // Filter for active categories
-                    .collect(Collectors.toList());
-        } else if ("INACTIVE".equalsIgnoreCase(status)) {
-            categories = categories.stream()
-                    .filter(c -> c.getId() == null) // Filter for inactive categories
+                    .filter(c -> status.equalsIgnoreCase(c.getStatus()))
                     .collect(Collectors.toList());
         }
 
@@ -74,16 +75,20 @@ public class LeaveCategoriesController {
     @RequireRole({"HR_ADMIN"})
     public ResponseEntity<LeaveCategoryDto> createLeaveCategory(
             @Valid @RequestBody LeaveCategoryRequest request) {
-        
+
         LeaveCategory category = new LeaveCategory();
         category.setName(request.getName());
         category.setPaid(request.getPaid() != null ? request.getPaid() : true);
         category.setRequiresDocument(request.getRequiresDocument() != null ? request.getRequiresDocument() : false);
         category.setDefaultAnnualQuota(request.getDefaultAnnualQuota() != null ? request.getDefaultAnnualQuota() : 0.0);
+        if (request.getCategoryCode() != null) category.setCategoryCode(request.getCategoryCode());
+        if (request.getCategoryType() != null) category.setCategoryType(request.getCategoryType());
+        if (request.getApplicableTo() != null) category.setApplicableTo(request.getApplicableTo());
+        if (request.getStatus() != null) category.setStatus(request.getStatus());
 
         LeaveCategory saved = leaveCategoryRepository.save(category);
         LeaveCategoryDto dto = toLeaveCategoryDto(saved);
-        
+
         return ResponseEntity.status(201).body(dto);
     }
 
@@ -92,7 +97,7 @@ public class LeaveCategoriesController {
     public ResponseEntity<LeaveCategoryDto> updateLeaveCategory(
             @PathVariable Integer categoryId,
             @Valid @RequestBody LeaveCategoryRequest request) {
-        
+
         LeaveCategory category = leaveCategoryRepository.findById(categoryId)
                 .orElseThrow(() -> new ResourceNotFoundException("LeaveCategory", categoryId));
 
@@ -106,10 +111,22 @@ public class LeaveCategoriesController {
         if (request.getDefaultAnnualQuota() != null) {
             category.setDefaultAnnualQuota(request.getDefaultAnnualQuota());
         }
+        if (request.getCategoryCode() != null) {
+            category.setCategoryCode(request.getCategoryCode());
+        }
+        if (request.getCategoryType() != null) {
+            category.setCategoryType(request.getCategoryType());
+        }
+        if (request.getApplicableTo() != null) {
+            category.setApplicableTo(request.getApplicableTo());
+        }
+        if (request.getStatus() != null) {
+            category.setStatus(request.getStatus());
+        }
 
         LeaveCategory saved = leaveCategoryRepository.save(category);
         LeaveCategoryDto dto = toLeaveCategoryDto(saved);
-        
+
         return ResponseEntity.ok(dto);
     }
 
@@ -132,10 +149,13 @@ public class LeaveCategoriesController {
         LeaveCategoryDto dto = new LeaveCategoryDto();
         dto.setId(category.getId());
         dto.setCategoryName(category.getName());
+        dto.setCategoryCode(category.getCategoryCode());
+        dto.setCategoryType(category.getCategoryType());
+        dto.setApplicableTo(category.getApplicableTo());
         dto.setIsPaid(category.isPaid());
         dto.setRequiresDocument(category.isRequiresDocument());
         dto.setDefaultAnnualQuota(category.getDefaultAnnualQuota());
-        dto.setStatus("ACTIVE"); // Default to active for now
+        dto.setStatus(category.getStatus());
         dto.setIsSystemCategory(category.getId() <= 5); // Assuming first 5 are system categories
         return dto;
     }

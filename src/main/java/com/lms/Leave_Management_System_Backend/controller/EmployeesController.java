@@ -3,7 +3,11 @@ package com.lms.Leave_Management_System_Backend.controller;
 import com.lms.Leave_Management_System_Backend.dto.*;
 import com.lms.Leave_Management_System_Backend.exception.BusinessRuleException;
 import com.lms.Leave_Management_System_Backend.exception.ResourceNotFoundException;
+import com.lms.Leave_Management_System_Backend.model.Department;
+import com.lms.Leave_Management_System_Backend.model.Role;
 import com.lms.Leave_Management_System_Backend.model.User;
+import com.lms.Leave_Management_System_Backend.repository.DepartmentRepository;
+import com.lms.Leave_Management_System_Backend.repository.RoleRepository;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
 import com.lms.Leave_Management_System_Backend.service.AttachmentService;
@@ -15,6 +19,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -28,10 +33,20 @@ public class EmployeesController {
 
     private final UserRepository userRepository;
     private final AttachmentService attachmentService;
+    private final DepartmentRepository departmentRepository;
+    private final RoleRepository roleRepository;
+    private final PasswordEncoder passwordEncoder;
 
-    public EmployeesController(UserRepository userRepository, AttachmentService attachmentService) {
+    public EmployeesController(UserRepository userRepository,
+                               AttachmentService attachmentService,
+                               DepartmentRepository departmentRepository,
+                               RoleRepository roleRepository,
+                               PasswordEncoder passwordEncoder) {
         this.userRepository = userRepository;
         this.attachmentService = attachmentService;
+        this.departmentRepository = departmentRepository;
+        this.roleRepository = roleRepository;
+        this.passwordEncoder = passwordEncoder;
     }
 
     @GetMapping
@@ -45,7 +60,7 @@ public class EmployeesController {
             @RequestParam(defaultValue = "20") int limit,
             Authentication authentication) {
 
-        Pageable pageable = PageRequest.of(page - 1, limit, Sort.by("name").ascending());
+        Pageable pageable = PageRequest.of(page - 1, limit, Sort.by("fullName").ascending());
         Page<User> employees;
 
         // Apply filters based on parameters
@@ -85,14 +100,12 @@ public class EmployeesController {
             @Valid @RequestBody EmployeeInput employeeInput,
             Authentication authentication) {
 
-        // Check if email already exists
         if (userRepository.findByEmailIgnoreCase(employeeInput.getEmail()).isPresent()) {
             throw new BusinessRuleException("Email already in use");
         }
 
-        // Check if employee code already exists
-        if (employeeInput.getEmployeeCode() != null && 
-            userRepository.findByEmployeeCode(employeeInput.getEmployeeCode()).isPresent()) {
+        if (employeeInput.getEmployeeCode() != null &&
+                userRepository.findByEmployeeCode(employeeInput.getEmployeeCode()).isPresent()) {
             throw new BusinessRuleException("Employee code already in use");
         }
 
@@ -100,36 +113,40 @@ public class EmployeesController {
         user.setName(employeeInput.getFullName());
         user.setEmail(employeeInput.getEmail());
         user.setPhone(employeeInput.getPhone());
-        // In real implementation, fetch role from repository
-        // user.setRole(roleRepository.findByRoleCode(employeeInput.getRole().name()).orElseThrow(...));
+
+        // 1. Fetch and set the mandatory Role entity
+        String roleCode = employeeInput.getRole() != null ? employeeInput.getRole() : "EMPLOYEE";
+        Role role = roleRepository.findByRoleCode(roleCode)
+                .orElseThrow(() -> new ResourceNotFoundException("Role", roleCode));
+        user.setRole(role);
+
+        // 2. Set a default password hash (satisfies nullable = false)
+        user.setPasswordHash(passwordEncoder.encode("Welcome@123"));
+
         user.setDesignation(employeeInput.getDesignation());
         user.setDateOfJoining(employeeInput.getDateOfJoining());
-        user.setEmploymentStatus(employeeInput.getEmploymentStatus() != null ? 
+        user.setEmploymentStatus(employeeInput.getEmploymentStatus() != null ?
                 User.EmploymentStatus.valueOf(employeeInput.getEmploymentStatus()) : User.EmploymentStatus.ACTIVE);
         user.setWorkLocation(employeeInput.getWorkLocation());
         user.setEmploymentType(employeeInput.getEmploymentType());
-        
-        // Set department and manager if provided
+
+        // 3. Set Manager (Reports To)
         if (employeeInput.getReportsTo() != null) {
             User manager = userRepository.findById(employeeInput.getReportsTo().longValue())
                     .orElseThrow(() -> new ResourceNotFoundException("User", employeeInput.getReportsTo()));
             user.setReportsTo(manager);
         }
+
+        // 4. Set Department
         if (employeeInput.getDepartmentId() != null) {
-            // In real implementation, fetch department from repository
-            // user.setDepartment(departmentRepository.findById(employeeInput.getDepartmentId()).orElseThrow(...));
-        }
-        
-        if (employeeInput.getReportsTo() != null) {
-            User manager = userRepository.findById(employeeInput.getReportsTo().longValue())
-                    .orElseThrow(() -> new ResourceNotFoundException("User", employeeInput.getReportsTo().longValue()));
-            user.setReportsTo(manager);
+            Department department = departmentRepository.findById((int) employeeInput.getDepartmentId().longValue())
+                    .orElseThrow(() -> new ResourceNotFoundException("Department", employeeInput.getDepartmentId()));
+            user.setDepartment(department);
         }
 
         if (employeeInput.getEmployeeCode() != null) {
             user.setEmployeeCode(employeeInput.getEmployeeCode());
         } else {
-            // Generate employee code
             user.setEmployeeCode("EMP-" + System.currentTimeMillis());
         }
 

@@ -40,4 +40,44 @@ public class LeaveCategoryRequest {
     public void setDefaultAnnualQuota(Double defaultAnnualQuota) {
         this.defaultAnnualQuota = defaultAnnualQuota;
     }
+
+    // These were missing entirely — the entity/output DTO already support
+    // them, but there was no way for a create/update request to actually
+    // set them (which is a big part of why GET returns them as null).
+    private String categoryCode;
+    private String categoryType;
+    private String applicableTo;
+    private String status;
+
+    public String getCategoryCode() {
+        return categoryCode;
+    }
+
+    public void setCategoryCode(String categoryCode) {
+        this.categoryCode = categoryCode;
+    }
+
+    public String getCategoryType() {
+        return categoryType;
+    }
+
+    public void setCategoryType(String categoryType) {
+        this.categoryType = categoryType;
+    }
+
+    public String getApplicableTo() {
+        return applicableTo;
+    }
+
+    public void setApplicableTo(String applicableTo) {
+        this.applicableTo = applicableTo;
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public void setStatus(String status) {
+        this.status = status;
+    }
 }
