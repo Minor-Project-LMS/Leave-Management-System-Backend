@@ -16,7 +16,11 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -49,29 +53,39 @@ public class AuditTrailController {
         if (dateFrom != null || dateTo != null || userId != null || action != null || entityType != null || q != null) {
             auditTrailPage = auditTrailRepository.findAll((root, query, cb) -> {
                 var predicates = new java.util.ArrayList<jakarta.persistence.criteria.Predicate>();
-                
-                if (dateFrom != null) {
-                    predicates.add(cb.greaterThanOrEqualTo(root.get("performedAt"), LocalDateTime.parse(dateFrom)));
+
+                if (dateFrom != null && !dateFrom.isBlank()) {
+                    LocalDateTime parsedFrom = parseToLocalDateTime(dateFrom);
+                    if (parsedFrom != null) {
+                        predicates.add(cb.greaterThanOrEqualTo(root.get("performedAt"), parsedFrom));
+                    }
                 }
-                if (dateTo != null) {
-                    predicates.add(cb.lessThanOrEqualTo(root.get("performedAt"), LocalDateTime.parse(dateTo)));
+                if (dateTo != null && !dateTo.isBlank()) {
+                    LocalDateTime parsedTo = parseToLocalDateTime(dateTo);
+                    if (parsedTo != null) {
+                        predicates.add(cb.lessThanOrEqualTo(root.get("performedAt"), parsedTo));
+                    }
                 }
                 if (userId != null) {
                     predicates.add(cb.equal(root.get("performedBy").get("id"), userId.longValue()));
                 }
-                if (action != null) {
-                    predicates.add(cb.equal(root.get("action"), AuditTrail.AuditAction.valueOf(action)));
+                if (action != null && !action.isBlank()) {
+                    try {
+                        predicates.add(cb.equal(root.get("action"), AuditTrail.AuditAction.valueOf(action.toUpperCase())));
+                    } catch (IllegalArgumentException ignored) {
+                        // Ignore invalid enum values or filter to empty
+                    }
                 }
-                if (entityType != null) {
+                if (entityType != null && !entityType.isBlank()) {
                     predicates.add(cb.equal(root.get("entityType"), entityType));
                 }
-                if (q != null) {
+                if (q != null && !q.isBlank()) {
                     predicates.add(cb.or(
-                        cb.like(root.get("entityType"), "%" + q + "%"),
-                        cb.like(root.get("action").as(String.class), "%" + q + "%")
+                            cb.like(cb.lower(root.get("entityType")), "%" + q.toLowerCase() + "%"),
+                            cb.like(cb.lower(root.get("action").as(String.class)), "%" + q.toLowerCase() + "%")
                     ));
                 }
-                
+
                 return cb.and(predicates.toArray(new jakarta.persistence.criteria.Predicate[0]));
             }, pageable);
         } else {
@@ -121,12 +135,11 @@ public class AuditTrailController {
         entryDetail.setPerformedBy(auditTrail.getPerformedBy().getId().intValue());
         entryDetail.setPerformedByName(auditTrail.getPerformedBy().getName());
         entryDetail.setDescription(auditTrail.getAction().name() + " operation on " + auditTrail.getEntityType());
-        entryDetail.setModule("System"); // Could be derived from entity type
-        entryDetail.setStatus("SUCCESS"); // Could be derived from action or added to entity
+        entryDetail.setModule("System");
+        entryDetail.setStatus("SUCCESS");
         entryDetail.setIpAddress(auditTrail.getIpAddress());
         entryDetail.setPerformedAt(auditTrail.getPerformedAt());
-        
-        // Parse JSON states
+
         try {
             if (auditTrail.getBeforeState() != null) {
                 entryDetail.setBeforeState(Map.of("state", auditTrail.getBeforeState()));
@@ -135,7 +148,6 @@ public class AuditTrailController {
                 entryDetail.setAfterState(Map.of("state", auditTrail.getAfterState()));
             }
         } catch (Exception e) {
-            // Handle JSON parsing errors
             entryDetail.setBeforeState(Map.of());
             entryDetail.setAfterState(Map.of());
         }
@@ -151,23 +163,37 @@ public class AuditTrailController {
             @RequestParam(defaultValue = "csv") String format,
             Authentication authentication) {
 
-        // Simplified implementation - would generate actual export file
-        // In real implementation, return CSV/XLSX file stream
         return ResponseEntity.ok().build();
     }
 
-    // Helper method to convert AuditTrail to AuditLogEntry
+    // Safely parses ISO-8601 date strings containing offsets or local date-times
+    private LocalDateTime parseToLocalDateTime(String dateStr) {
+        if (dateStr == null || dateStr.isBlank()) return null;
+        try {
+            if (dateStr.endsWith("Z") || dateStr.contains("+")) {
+                return Instant.parse(dateStr).atZone(ZoneOffset.UTC).toLocalDateTime();
+            }
+            return LocalDateTime.parse(dateStr);
+        } catch (DateTimeParseException e) {
+            try {
+                return OffsetDateTime.parse(dateStr).toLocalDateTime();
+            } catch (DateTimeParseException ex) {
+                return null;
+            }
+        }
+    }
+
     private AuditLogEntry convertToDto(AuditTrail auditTrail) {
         AuditLogEntry entry = new AuditLogEntry();
         entry.setId(auditTrail.getId().intValue());
         entry.setEntityType(auditTrail.getEntityType());
-        entry.setEntityId(auditTrail.getEntityId().intValue());
+        entry.setEntityId(auditTrail.getEntityId() != null ? auditTrail.getEntityId().intValue() : null);
         entry.setAction(auditTrail.getAction().name());
         entry.setPerformedBy(auditTrail.getPerformedBy().getId().intValue());
         entry.setPerformedByName(auditTrail.getPerformedBy().getName());
         entry.setDescription(auditTrail.getAction().name() + " operation on " + auditTrail.getEntityType());
-        entry.setModule("System"); // Could be derived from entity type
-        entry.setStatus("SUCCESS"); // Could be derived from action or added to entity
+        entry.setModule("System");
+        entry.setStatus("SUCCESS");
         entry.setIpAddress(auditTrail.getIpAddress());
         entry.setPerformedAt(auditTrail.getPerformedAt());
         return entry;

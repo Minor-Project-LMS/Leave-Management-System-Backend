@@ -445,8 +445,7 @@ public class CompOffController {
 
     private void createNotification(User user, String type, String title, String message, String entityType, Long entityId) {
         try {
-            System.out.println("Creating notification for user: " + user.getEmail() + " type: " + type);
-            
+
             // Create notification for IN_APP channel
             NotificationQueue inAppNotification = new NotificationQueue();
             inAppNotification.setUser(user);
@@ -460,7 +459,6 @@ public class CompOffController {
             inAppNotification.setScheduledAt(LocalDateTime.now());
             inAppNotification.setIsRead(false);
             notificationQueueRepository.save(inAppNotification);
-            System.out.println("IN_APP notification created with ID: " + inAppNotification.getId());
 
             // Create notification for EMAIL channel
             NotificationQueue emailNotification = new NotificationQueue();
@@ -474,7 +472,6 @@ public class CompOffController {
             emailNotification.setCreatedAt(LocalDateTime.now());
             emailNotification.setScheduledAt(LocalDateTime.now());
             notificationQueueRepository.save(emailNotification);
-            System.out.println("EMAIL notification created with ID: " + emailNotification.getId());
 
         } catch (Exception e) {
             // Log error but don't fail the main operation
