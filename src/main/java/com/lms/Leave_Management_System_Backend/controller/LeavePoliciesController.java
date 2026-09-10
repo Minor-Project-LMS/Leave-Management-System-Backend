@@ -47,8 +47,8 @@ public class LeavePoliciesController {
             @RequestParam(required = false) String sort) {
 
         Pageable pageable = PageRequest.of(page - 1, limit,
-            sort != null ? Sort.by(sort) : Sort.by("effectiveFrom").descending());
-        
+                sort != null ? Sort.by(sort) : Sort.by("effectiveFrom").descending());
+
         Page<LeavePolicy> policies;
         if (categoryId != null || departmentId != null) {
             policies = leavePolicyRepository.findWithFilters(categoryId, departmentId, pageable);
@@ -61,10 +61,10 @@ public class LeavePoliciesController {
                 .collect(Collectors.toList());
 
         PageResponse pageResponse = new PageResponse(
-            page,
-            limit,
-            policies.getTotalElements(),
-            policies.getTotalPages()
+                page,
+                limit,
+                policies.getTotalElements(),
+                policies.getTotalPages()
         );
 
         return ResponseEntity.ok(new PaginatedResponse<>(true, policyDtos, pageResponse));
@@ -74,10 +74,10 @@ public class LeavePoliciesController {
     @RequireRole({"HR_ADMIN"})
     public ResponseEntity<LeavePolicyDto> createLeavePolicy(
             @RequestBody LeavePolicyRequest request) {
-        
+
         LeaveCategory category = leaveCategoryRepository.findById(request.getCategoryId())
                 .orElseThrow(() -> new ResourceNotFoundException("LeaveCategory", request.getCategoryId()));
-        
+
         Department department = null;
         if (request.getDepartmentId() != null) {
             department = departmentRepository.findById(request.getDepartmentId())
@@ -96,7 +96,7 @@ public class LeavePoliciesController {
 
         LeavePolicy saved = leavePolicyRepository.save(policy);
         LeavePolicyDto dto = toLeavePolicyDto(saved);
-        
+
         return ResponseEntity.status(201).body(dto);
     }
 
@@ -104,10 +104,10 @@ public class LeavePoliciesController {
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
     public ResponseEntity<LeavePolicyDto> getLeavePolicy(
             @PathVariable Integer policyId) {
-        
+
         LeavePolicy policy = leavePolicyRepository.findById(policyId)
                 .orElseThrow(() -> new ResourceNotFoundException("LeavePolicy", policyId));
-        
+
         LeavePolicyDto dto = toLeavePolicyDto(policy);
         return ResponseEntity.ok(dto);
     }
@@ -117,7 +117,7 @@ public class LeavePoliciesController {
     public ResponseEntity<LeavePolicyDto> updateLeavePolicy(
             @PathVariable Integer policyId,
             @RequestBody LeavePolicyRequest request) {
-        
+
         LeavePolicy policy = leavePolicyRepository.findById(policyId)
                 .orElseThrow(() -> new ResourceNotFoundException("LeavePolicy", policyId));
 
@@ -131,7 +131,7 @@ public class LeavePoliciesController {
                     .orElseThrow(() -> new ResourceNotFoundException("LeaveCategory", request.getCategoryId()));
             policy.setCategory(category);
         }
-        
+
         if (request.getDepartmentId() != null) {
             Department department = departmentRepository.findById(request.getDepartmentId())
                     .orElseThrow(() -> new ResourceNotFoundException("Department", request.getDepartmentId()));
@@ -165,7 +165,7 @@ public class LeavePoliciesController {
     @RequireRole({"HR_ADMIN"})
     public ResponseEntity<List<LeavePolicyDto>> getPolicyHistory(
             @PathVariable Integer policyId) {
-        
+
         LeavePolicy currentPolicy = leavePolicyRepository.findById(policyId)
                 .orElseThrow(() -> new ResourceNotFoundException("LeavePolicy", policyId));
 
@@ -188,20 +188,25 @@ public class LeavePoliciesController {
     private LeavePolicyDto toLeavePolicyDto(LeavePolicy policy) {
         LeavePolicyDto dto = new LeavePolicyDto();
         dto.setPolicyId(policy.getId());
+        dto.setPolicyName(policy.getPolicyName());
+        dto.setPolicyCode(policy.getPolicyCode());
 
         LeaveCategoryDto categoryDto = new LeaveCategoryDto();
         categoryDto.setId(policy.getCategory().getId());
         categoryDto.setName(policy.getCategory().getName());
+        categoryDto.setCategoryCode(policy.getCategory().getCategoryCode());
+        categoryDto.setCategoryType(policy.getCategory().getCategoryType());
+        categoryDto.setApplicableTo(policy.getCategory().getApplicableTo());
         categoryDto.setPaid(policy.getCategory().isPaid());
         categoryDto.setRequiresDocument(policy.getCategory().isRequiresDocument());
         categoryDto.setDefaultAnnualQuota(policy.getCategory().getDefaultAnnualQuota());
-        categoryDto.setActive(true); // Default to true
+        categoryDto.setStatus(policy.getCategory().getStatus());
         dto.setCategory(categoryDto);
 
         if (policy.getDepartment() != null) {
             DepartmentDto departmentDto = new DepartmentDto(
-                policy.getDepartment().getId(),
-                policy.getDepartment().getDepartmentName()
+                    policy.getDepartment().getId(),
+                    policy.getDepartment().getDepartmentName()
             );
             if (policy.getDepartment().getDepartmentHead() != null) {
                 departmentDto.setDepartmentHeadId(policy.getDepartment().getDepartmentHead().getId().longValue());
@@ -217,7 +222,8 @@ public class LeavePoliciesController {
         dto.setMinNoticeDays(policy.getMinNoticeDays() != null ? policy.getMinNoticeDays() : 0);
         dto.setMaxConsecutiveDays(policy.getMaxConsecutiveDays() != null ? policy.getMaxConsecutiveDays() : 0);
         dto.setEffectiveFrom(policy.getEffectiveFrom());
-        dto.setStatus("ACTIVE"); // Default to ACTIVE
+        dto.setAccrualFrequency(policy.getAccrualFrequency());
+        dto.setStatus(policy.getStatus());
 
         return dto;
     }
