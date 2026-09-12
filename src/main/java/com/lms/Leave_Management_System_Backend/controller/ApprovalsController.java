@@ -46,7 +46,7 @@ public class ApprovalsController {
             @RequestParam(defaultValue = "20") int limit,
             @RequestParam(defaultValue = "newest") String sort,
             Authentication authentication) {
-        
+
         String email = authentication.getName();
         User currentUser = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
@@ -54,36 +54,36 @@ public class ApprovalsController {
         Sort.Direction direction = sort.equals("newest") ? Sort.Direction.DESC : Sort.Direction.ASC;
         // Contract uses 1-based page numbers, Spring uses 0-based
         Pageable pageable = PageRequest.of(page - 1, limit, Sort.by(direction, "appliedAt"));
-        
+
         // Get all requests where user is the current approver OR has made an approval decision
         List<LeaveApproval> userApprovals = leaveApprovalRepository.findByApproverId(currentUser.getId());
         List<Long> requestIdsWithUserAction = userApprovals.stream()
                 .map(approval -> approval.getRequest().getId())
                 .distinct()
                 .collect(Collectors.toList());
-        
+
         // Get requests where user is current approver
         Page<LeaveRequest> currentApproverRequests = leaveRequestRepository.findByCurrentApproverId(currentUser.getId(), Pageable.unpaged());
         List<Long> currentApproverRequestIds = currentApproverRequests.getContent().stream()
                 .map(LeaveRequest::getId)
                 .collect(Collectors.toList());
-        
+
         // Combine both sets - all requests the manager should see
         List<Long> allAccessibleRequestIds = requestIdsWithUserAction;
         allAccessibleRequestIds.addAll(currentApproverRequestIds);
         allAccessibleRequestIds = allAccessibleRequestIds.stream().distinct().collect(Collectors.toList());
-        
+
         // Get all accessible requests using custom query with entity graph
         List<LeaveRequest> allAccessibleRequests = leaveRequestRepository.findByIds(allAccessibleRequestIds);
-        
+
         // Filter by status for the current page
         List<LeaveRequest> filteredRequests = allAccessibleRequests.stream()
                 .filter(lr -> {
                     if (status.equals("ALL")) {
                         return true;
                     } else if (status.equals("PENDING")) {
-                        return lr.getStatus() == LeaveRequest.RequestStatus.PENDING_L1 || 
-                               lr.getStatus() == LeaveRequest.RequestStatus.PENDING_L2;
+                        return lr.getStatus() == LeaveRequest.RequestStatus.PENDING_L1 ||
+                                lr.getStatus() == LeaveRequest.RequestStatus.PENDING_L2;
                     } else if (status.equals("APPROVED")) {
                         return lr.getStatus() == LeaveRequest.RequestStatus.APPROVED;
                     } else if (status.equals("REJECTED")) {
@@ -99,53 +99,53 @@ public class ApprovalsController {
                     }
                 })
                 .collect(Collectors.toList());
-        
+
         // Apply pagination manually since we're working with a list
         int startIndex = (page - 1) * limit;
         int endIndex = Math.min(startIndex + limit, filteredRequests.size());
-        
+
         List<LeaveRequest> paginatedRequests;
         if (startIndex >= filteredRequests.size()) {
             paginatedRequests = List.of(); // Return empty list if page is out of bounds
         } else {
             paginatedRequests = filteredRequests.subList(startIndex, endIndex);
         }
-        
+
         List<LeaveRequestDto> dtos = paginatedRequests.stream()
                 .map(this::toLeaveRequestDto)
                 .collect(Collectors.toList());
 
         // Calculate counts for all tabs
         long allCount = allAccessibleRequests.size();
-        
+
         long pendingCount = allAccessibleRequests.stream()
-            .filter(lr -> lr.getStatus() == LeaveRequest.RequestStatus.PENDING_L1 || 
-                          lr.getStatus() == LeaveRequest.RequestStatus.PENDING_L2)
-            .count();
-        
+                .filter(lr -> lr.getStatus() == LeaveRequest.RequestStatus.PENDING_L1 ||
+                        lr.getStatus() == LeaveRequest.RequestStatus.PENDING_L2)
+                .count();
+
         long approvedCount = allAccessibleRequests.stream()
-            .filter(lr -> lr.getStatus() == LeaveRequest.RequestStatus.APPROVED)
-            .count();
-        
+                .filter(lr -> lr.getStatus() == LeaveRequest.RequestStatus.APPROVED)
+                .count();
+
         long rejectedCount = allAccessibleRequests.stream()
-            .filter(lr -> lr.getStatus() == LeaveRequest.RequestStatus.REJECTED)
-            .count();
+                .filter(lr -> lr.getStatus() == LeaveRequest.RequestStatus.REJECTED)
+                .count();
 
         ApprovalInboxResponse.ApprovalCounts counts = new ApprovalInboxResponse.ApprovalCounts(
-            (int) allCount, (int) pendingCount, (int) approvedCount, (int) rejectedCount
+                (int) allCount, (int) pendingCount, (int) approvedCount, (int) rejectedCount
         );
 
         int totalPages = (int) Math.ceil((double) filteredRequests.size() / limit);
 
         ApprovalInboxResponse response = new ApprovalInboxResponse(
-            page, // Return 1-based page number as per contract
-            limit,
-            filteredRequests.size(),
-            totalPages,
-            counts,
-            dtos
+                page, // Return 1-based page number as per contract
+                limit,
+                filteredRequests.size(),
+                totalPages,
+                counts,
+                dtos
         );
-        
+
         return ResponseEntity.ok(response);
     }
 
@@ -160,6 +160,7 @@ public class ApprovalsController {
         dto.setEndDate(request.getEndDate());
         dto.setSessionType(request.getSessionType().name());
         dto.setTotalDays(request.getTotalDays());
+        dto.setLopDays(request.getLopDays());
         dto.setReason(request.getReason());
         dto.setStatus(request.getStatus().name());
         if (request.getCurrentApprover() != null) {

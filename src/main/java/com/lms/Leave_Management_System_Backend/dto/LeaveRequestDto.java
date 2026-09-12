@@ -14,6 +14,7 @@ public class LeaveRequestDto {
     private LocalDate endDate;
     private String sessionType;
     private BigDecimal totalDays;
+    private BigDecimal lopDays;
     private String reason;
     private String status;
     private Long currentApproverId;
@@ -95,6 +96,14 @@ public class LeaveRequestDto {
 
     public void setTotalDays(BigDecimal totalDays) {
         this.totalDays = totalDays;
+    }
+
+    public BigDecimal getLopDays() {
+        return lopDays;
+    }
+
+    public void setLopDays(BigDecimal lopDays) {
+        this.lopDays = lopDays;
     }
 
     public String getReason() {

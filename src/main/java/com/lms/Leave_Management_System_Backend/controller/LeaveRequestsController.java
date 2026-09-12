@@ -20,7 +20,6 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.math.BigDecimal;
-import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -163,25 +162,23 @@ public class LeaveRequestsController {
     }
 
     /**
-     * Calculate total days for leave request excluding weekends
+     * Calculate total days for a leave request under the Sandwich Leave
+     * policy — see notes below.
      */
+    // Sandwich Leave policy: when a leave request spans a weekend (start
+    // date before the weekend, end date after it, in one continuous
+    // request), the weekend days count as leave too — they're "sandwiched"
+    // between two leave days, rather than being free days off in the
+    // middle of a leave stretch. In practice, for a single continuous
+    // date range this just means every calendar day in the range counts.
     private BigDecimal calculateTotalDays(LocalDate startDate, LocalDate endDate, String sessionType) {
-        long businessDays = 0;
-
-        // Count business days (Monday-Friday)
-        LocalDate current = startDate;
-        while (!current.isAfter(endDate)) {
-            if (current.getDayOfWeek() != DayOfWeek.SATURDAY && current.getDayOfWeek() != DayOfWeek.SUNDAY) {
-                businessDays++;
-            }
-            current = current.plusDays(1);
-        }
+        long calendarDays = java.time.temporal.ChronoUnit.DAYS.between(startDate, endDate) + 1;
 
         // Adjust for session type
         if ("FIRST_HALF".equals(sessionType) || "SECOND_HALF".equals(sessionType)) {
-            return BigDecimal.valueOf(businessDays * 0.5);
+            return BigDecimal.valueOf(calendarDays * 0.5);
         } else {
-            return BigDecimal.valueOf(businessDays);
+            return BigDecimal.valueOf(calendarDays);
         }
     }
 
@@ -374,7 +371,12 @@ public class LeaveRequestsController {
         // Validate max continuous days limit according to policy
         validateConsecutiveDays(currentUser, leaveRequest.getCategory(), leaveRequest.getTotalDays());
 
-        // Check if user has sufficient leave balance
+        // Check leave balance — rather than blocking the request outright,
+        // any days beyond what's available are marked as Loss of Pay (LOP):
+        // the request still goes through, but the LOP portion won't be
+        // deducted from the leave ledger later (see approveLeaveRequest),
+        // and the employee/approver can see upfront that pay will be
+        // affected for those days.
         int currentYear = java.time.Year.now().getValue();
         leaveLedgerProvisioningService.getOrInitializeLedger(currentUser, currentYear);
         Optional<LeaveLedger> ledger = leaveLedgerRepository.findByUserIdAndCategoryIdAndFiscalYear(
@@ -383,9 +385,9 @@ public class LeaveRequestsController {
                 currentYear
         );
 
-        if (ledger.isPresent() && ledger.get().getClosingBalance().compareTo(leaveRequest.getTotalDays()) < 0) {
-            throw new ConflictException("Insufficient leave balance. Available: " + ledger.get().getClosingBalance() + ", Required: " + leaveRequest.getTotalDays());
-        }
+        BigDecimal availableBalance = ledger.map(LeaveLedger::getClosingBalance).orElse(BigDecimal.ZERO);
+        BigDecimal lopDays = leaveRequest.getTotalDays().subtract(availableBalance);
+        leaveRequest.setLopDays(lopDays.compareTo(BigDecimal.ZERO) > 0 ? lopDays : BigDecimal.ZERO);
 
         // Check for overlapping approved requests
         List<LeaveRequest> overlappingApproved = leaveRequestRepository.findByUserIdAndStatus(
@@ -536,11 +538,18 @@ public class LeaveRequestsController {
 
                 if (ledger.isPresent()) {
                     LeaveLedger leaveLedger = ledger.get();
-                    if (leaveLedger.getClosingBalance().compareTo(leaveRequest.getTotalDays()) < 0) {
-                        throw new ConflictException("Insufficient leave balance at approval time");
-                    }
-                    leaveLedger.setUsed(leaveLedger.getUsed().add(leaveRequest.getTotalDays()));
-                    leaveLedger.setClosingBalance(leaveLedger.getClosingBalance().subtract(leaveRequest.getTotalDays()));
+                    // Re-check against the current balance at approval time
+                    // (it may have shifted since submission) and recompute
+                    // the LOP split, rather than blocking the approval
+                    // outright when balance is short.
+                    BigDecimal availableBalance = leaveLedger.getClosingBalance();
+                    BigDecimal lopDays = leaveRequest.getTotalDays().subtract(availableBalance);
+                    lopDays = lopDays.compareTo(BigDecimal.ZERO) > 0 ? lopDays : BigDecimal.ZERO;
+                    leaveRequest.setLopDays(lopDays);
+
+                    BigDecimal paidDays = leaveRequest.getTotalDays().subtract(lopDays);
+                    leaveLedger.setUsed(leaveLedger.getUsed().add(paidDays));
+                    leaveLedger.setClosingBalance(leaveLedger.getClosingBalance().subtract(paidDays));
                     leaveLedgerRepository.save(leaveLedger);
                 }
 
@@ -805,6 +814,7 @@ public class LeaveRequestsController {
         dto.setEndDate(request.getEndDate());
         dto.setSessionType(request.getSessionType() != null ? request.getSessionType().name() : null);
         dto.setTotalDays(request.getTotalDays());
+        dto.setLopDays(request.getLopDays());
         dto.setReason(request.getReason());
         dto.setStatus(request.getStatus() != null ? request.getStatus().name() : null);
         if (request.getCurrentApprover() != null) {

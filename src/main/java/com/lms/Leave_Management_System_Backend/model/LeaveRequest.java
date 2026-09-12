@@ -45,6 +45,9 @@ public class LeaveRequest {
     @Column(name = "total_days", nullable = false)
     private BigDecimal totalDays;
 
+    @Column(name = "lop_days", nullable = false)
+    private BigDecimal lopDays = BigDecimal.ZERO;
+
     @Column(name = "reason")
     private String reason;
 
@@ -137,6 +140,14 @@ public class LeaveRequest {
 
     public void setTotalDays(BigDecimal totalDays) {
         this.totalDays = totalDays;
+    }
+
+    public BigDecimal getLopDays() {
+        return lopDays;
+    }
+
+    public void setLopDays(BigDecimal lopDays) {
+        this.lopDays = lopDays;
     }
 
     public String getReason() {
