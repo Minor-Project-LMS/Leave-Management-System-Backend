@@ -6,7 +6,7 @@ import com.lms.Leave_Management_System_Backend.dto.PageResponse;
 import com.lms.Leave_Management_System_Backend.model.NotificationQueue;
 import com.lms.Leave_Management_System_Backend.repository.NotificationQueueRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
-import jakarta.transaction.Transactional;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -31,6 +31,7 @@ public class NotificationQueueController {
 
     @GetMapping
     @RequireRole({"HR_ADMIN"})
+    @Transactional(readOnly = true)
     public ResponseEntity<PaginatedResponse<NotificationQueueItem>> getNotificationQueue(
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String channel,
