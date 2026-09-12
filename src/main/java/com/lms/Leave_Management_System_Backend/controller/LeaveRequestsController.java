@@ -40,6 +40,7 @@ public class LeaveRequestsController {
     private final NotificationQueueRepository notificationQueueRepository;
     private final LeavePolicyRepository leavePolicyRepository;
     private final com.lms.Leave_Management_System_Backend.service.AttachmentService attachmentService;
+    private final com.lms.Leave_Management_System_Backend.service.LeaveLedgerProvisioningService leaveLedgerProvisioningService;
 
     // In-memory comment storage
     private static final Map<Long, List<CommentDto>> commentStorage = new ConcurrentHashMap<>();
@@ -53,7 +54,8 @@ public class LeaveRequestsController {
             LeaveLedgerRepository leaveLedgerRepository,
             NotificationQueueRepository notificationQueueRepository,
             LeavePolicyRepository leavePolicyRepository,
-            com.lms.Leave_Management_System_Backend.service.AttachmentService attachmentService) {
+            com.lms.Leave_Management_System_Backend.service.AttachmentService attachmentService,
+            com.lms.Leave_Management_System_Backend.service.LeaveLedgerProvisioningService leaveLedgerProvisioningService) {
         this.leaveRequestRepository = leaveRequestRepository;
         this.userRepository = userRepository;
         this.leaveCategoryRepository = leaveCategoryRepository;
@@ -63,6 +65,7 @@ public class LeaveRequestsController {
         this.notificationQueueRepository = notificationQueueRepository;
         this.leavePolicyRepository = leavePolicyRepository;
         this.attachmentService = attachmentService;
+        this.leaveLedgerProvisioningService = leaveLedgerProvisioningService;
     }
 
     @PostMapping
@@ -71,7 +74,7 @@ public class LeaveRequestsController {
     public ResponseEntity<ApiResponse<LeaveRequestDto>> createLeaveRequest(
             @Valid @RequestBody LeaveRequestCreate request,
             Authentication authentication) {
-        
+
         String email = authentication.getName();
         User user = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
@@ -110,7 +113,7 @@ public class LeaveRequestsController {
             leaveRequest.setStatus(LeaveRequest.RequestStatus.DRAFT);
         } else {
             leaveRequest.setStatus(LeaveRequest.RequestStatus.PENDING_L1);
-            
+
             // Set the approver when creating a non-DRAFT request
             User reportsTo = user.getReportsTo();
             if (reportsTo != null) {
@@ -131,7 +134,7 @@ public class LeaveRequestsController {
         leaveRequest.setAppliedAt(LocalDateTime.now());
 
         LeaveRequest saved = leaveRequestRepository.save(leaveRequest);
-        
+
         // Send notification to employee
         createNotification(
                 saved.getUser(),
@@ -141,7 +144,7 @@ public class LeaveRequestsController {
                 "LEAVE_REQUEST",
                 saved.getId()
         );
-        
+
         // Send notification to manager for approval
         if (saved.getCurrentApprover() != null) {
             createNotification(
@@ -153,7 +156,7 @@ public class LeaveRequestsController {
                     saved.getId()
             );
         }
-        
+
         LeaveRequestDto dto = toLeaveRequestDto(saved);
 
         return ResponseEntity.status(201).body(new ApiResponse<LeaveRequestDto>(true, dto));
@@ -204,7 +207,7 @@ public class LeaveRequestsController {
         // Map sort enum values to actual sort parameters
         String sortProperty;
         Sort.Direction direction;
-        
+
         if ("recent".equalsIgnoreCase(sort)) {
             sortProperty = "appliedAt";
             direction = Sort.Direction.DESC;
@@ -373,6 +376,7 @@ public class LeaveRequestsController {
 
         // Check if user has sufficient leave balance
         int currentYear = java.time.Year.now().getValue();
+        leaveLedgerProvisioningService.getOrInitializeLedger(currentUser, currentYear);
         Optional<LeaveLedger> ledger = leaveLedgerRepository.findByUserIdAndCategoryIdAndFiscalYear(
                 leaveRequest.getUser().getId(),
                 leaveRequest.getCategory().getId(),
@@ -518,6 +522,12 @@ public class LeaveRequestsController {
             } else {
                 // Final approval - update leave ledger
                 int currentYear = java.time.Year.now().getValue();
+                // The ledger row for this category/year might not exist yet
+                // (e.g. nobody has opened the Leave Ledger page for this
+                // employee this year) — provisioning it here, rather than
+                // silently skipping the deduction when it's missing, is
+                // what actually made balances update on approval.
+                leaveLedgerProvisioningService.getOrInitializeLedger(leaveRequest.getUser(), currentYear);
                 Optional<LeaveLedger> ledger = leaveLedgerRepository.findByUserIdAndCategoryIdAndFiscalYear(
                         leaveRequest.getUser().getId(),
                         leaveRequest.getCategory().getId(),
@@ -833,8 +843,8 @@ public class LeaveRequestsController {
 
         // For managers, verify they are the current approver (or delegated approver)
         if (currentUser.getRole().getRoleCode().equals("MANAGER")) {
-            if (leaveRequest.getCurrentApprover() == null || 
-                !leaveRequest.getCurrentApprover().getId().equals(currentUser.getId())) {
+            if (leaveRequest.getCurrentApprover() == null ||
+                    !leaveRequest.getCurrentApprover().getId().equals(currentUser.getId())) {
                 throw new SecurityException("You can only view attachments for requests where you are the current approver");
             }
         }
@@ -926,8 +936,8 @@ public class LeaveRequestsController {
 
         // For managers, verify they are the current approver (or delegated approver)
         if (currentUser.getRole().getRoleCode().equals("MANAGER")) {
-            if (leaveRequest.getCurrentApprover() == null || 
-                !leaveRequest.getCurrentApprover().getId().equals(currentUser.getId())) {
+            if (leaveRequest.getCurrentApprover() == null ||
+                    !leaveRequest.getCurrentApprover().getId().equals(currentUser.getId())) {
                 throw new SecurityException("You can only view attachments for requests where you are the current approver");
             }
         }

@@ -7,6 +7,7 @@ import com.lms.Leave_Management_System_Backend.model.User;
 import com.lms.Leave_Management_System_Backend.repository.LeaveLedgerRepository;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
+import com.lms.Leave_Management_System_Backend.service.LeaveLedgerProvisioningService;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -27,12 +28,15 @@ public class LeaveLedgerController {
 
     private final LeaveLedgerRepository leaveLedgerRepository;
     private final UserRepository userRepository;
+    private final LeaveLedgerProvisioningService leaveLedgerProvisioningService;
 
     public LeaveLedgerController(
             LeaveLedgerRepository leaveLedgerRepository,
-            UserRepository userRepository) {
+            UserRepository userRepository,
+            LeaveLedgerProvisioningService leaveLedgerProvisioningService) {
         this.leaveLedgerRepository = leaveLedgerRepository;
         this.userRepository = userRepository;
+        this.leaveLedgerProvisioningService = leaveLedgerProvisioningService;
     }
 
     @GetMapping
@@ -41,21 +45,15 @@ public class LeaveLedgerController {
             @RequestParam(required = false) Integer year,
             @RequestParam(required = false) Long userId,
             Authentication authentication) {
-        
-        // If userId not provided, use current user
-        if (userId == null) {
-            String email = authentication.getName();
-            User currentUser = userRepository.findByEmailIgnoreCase(email)
-                    .orElseThrow(() -> new ResourceNotFoundException("User", email));
-            userId = currentUser.getId();
-        }
+
+        User targetUser = resolveTargetUser(userId, authentication);
 
         // Default to current year if not provided
         if (year == null) {
             year = LocalDate.now().getYear();
         }
 
-        List<LeaveLedger> ledgerEntries = leaveLedgerRepository.findByUserIdAndFiscalYear(userId, year, PageRequest.of(0, Integer.MAX_VALUE)).getContent();
+        List<LeaveLedger> ledgerEntries = leaveLedgerProvisioningService.getOrInitializeLedger(targetUser, year);
 
         List<LeaveLedgerSummaryDto> summaryList = ledgerEntries.stream()
                 .map(this::toLeaveLedgerSummaryDto)
@@ -75,34 +73,33 @@ public class LeaveLedgerController {
             @RequestParam(required = false) String sort,
             Authentication authentication) {
 
-        // If userId not provided, use current user
-        if (userId == null) {
-            String email = authentication.getName();
-            User currentUser = userRepository.findByEmailIgnoreCase(email)
-                    .orElseThrow(() -> new ResourceNotFoundException("User", email));
-            userId = currentUser.getId();
-        }
+        User targetUser = resolveTargetUser(userId, authentication);
 
         // Default to current fiscal year if not provided
         if (fiscalYear == null) {
             fiscalYear = LocalDate.now().getYear();
         }
 
+        // Make sure the year has been provisioned before we page through it,
+        // otherwise a brand-new fiscal year with no activity yet just looks
+        // like an error instead of an empty-but-valid ledger.
+        leaveLedgerProvisioningService.getOrInitializeLedger(targetUser, fiscalYear);
+
         Pageable pageable = PageRequest.of(page - 1, limit,
-            sort != null ? Sort.by(sort) : Sort.by("transactionDate").descending());
+                sort != null ? Sort.by(sort) : Sort.by("transactionDate").descending());
 
         Page<LeaveLedger> transactions = leaveLedgerRepository.findWithFilters(
-            userId, fiscalYear, categoryId, pageable);
+                targetUser.getId(), fiscalYear, categoryId, pageable);
 
         List<LedgerTransactionDto> dtoList = transactions.getContent().stream()
                 .map(this::toLedgerTransactionDto)
                 .collect(Collectors.toList());
 
         PageResponse pageResponse = new PageResponse(
-            page,
-            limit,
-            transactions.getTotalElements(),
-            transactions.getTotalPages()
+                page,
+                limit,
+                transactions.getTotalElements(),
+                transactions.getTotalPages()
         );
 
         return ResponseEntity.ok(new PaginatedResponse<>(true, dtoList, pageResponse));
@@ -113,7 +110,7 @@ public class LeaveLedgerController {
     public ResponseEntity<String> exportLedgerCsv(
             @RequestParam(required = false) Integer fiscalYear,
             Authentication authentication) {
-        
+
         String email = authentication.getName();
         User currentUser = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
@@ -122,8 +119,7 @@ public class LeaveLedgerController {
             fiscalYear = LocalDate.now().getYear();
         }
 
-        List<LeaveLedger> ledgerEntries = leaveLedgerRepository.findByUserIdAndFiscalYear(
-            currentUser.getId(), fiscalYear, PageRequest.of(0, Integer.MAX_VALUE)).getContent();
+        List<LeaveLedger> ledgerEntries = leaveLedgerProvisioningService.getOrInitializeLedger(currentUser, fiscalYear);
 
         StringBuilder csv = new StringBuilder();
         csv.append("Category,Fiscal Year,Opening Balance,Accrued,Used,Encashed,Carried Forward,Closing Balance\n");
@@ -143,6 +139,17 @@ public class LeaveLedgerController {
                 .header("Content-Disposition", "attachment; filename=ledger_" + fiscalYear + ".csv")
                 .header("Content-Type", "text/csv")
                 .body(csv.toString());
+    }
+
+    private User resolveTargetUser(Long userId, Authentication authentication) {
+        if (userId != null) {
+            return userRepository.findById(userId)
+                    .orElseThrow(() -> new ResourceNotFoundException("User", userId));
+        }
+
+        String email = authentication.getName();
+        return userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
     }
 
     private LeaveLedgerEntryDto toLeaveLedgerEntryDto(LeaveLedger ledger) {
@@ -180,7 +187,7 @@ public class LeaveLedgerController {
         dto.setDate(ledger.getTransactionDate() != null ? ledger.getTransactionDate() : LocalDate.now());
         dto.setCategoryName(ledger.getCategory().getName());
         dto.setDescription(ledger.getDescription() != null ? ledger.getDescription() : "Balance update");
-        
+
         // Determine credit/debit based on transaction type
         if ("CREDIT".equals(ledger.getTransactionType())) {
             dto.setCredit(ledger.getAccrued().doubleValue());
@@ -192,7 +199,7 @@ public class LeaveLedgerController {
             dto.setCredit(0.0);
             dto.setDebit(0.0);
         }
-        
+
         dto.setRunningBalance(ledger.getClosingBalance().doubleValue());
         dto.setReferenceType(ledger.getReferenceType());
         dto.setReferenceId(ledger.getReferenceId() != null ? ledger.getReferenceId().intValue() : null);
