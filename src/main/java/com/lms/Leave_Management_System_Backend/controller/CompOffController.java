@@ -5,6 +5,7 @@ import com.lms.Leave_Management_System_Backend.exception.ConflictException;
 import com.lms.Leave_Management_System_Backend.exception.ResourceNotFoundException;
 import com.lms.Leave_Management_System_Backend.exception.SecurityException;
 import com.lms.Leave_Management_System_Backend.model.CompOffRequest;
+import com.lms.Leave_Management_System_Backend.model.LeaveLedger;
 import com.lms.Leave_Management_System_Backend.model.NotificationQueue;
 import com.lms.Leave_Management_System_Backend.model.User;
 import com.lms.Leave_Management_System_Backend.repository.CompOffRequestRepository;
@@ -28,7 +29,9 @@ import java.util.List;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.Year;
+import java.time.LocalDate;
 import java.util.stream.Collectors;
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/v1/comp-off-requests")
@@ -57,20 +60,25 @@ public class CompOffController {
     }
 
     @PostMapping
-    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @RequireRole({"MANAGER", "HR_ADMIN"})
+    @Transactional
     public ResponseEntity<CompOffRequestDto> createCompOffRequest(
             @Valid @RequestBody CompOffRequestCreate request,
             Authentication authentication) {
         
         String email = authentication.getName();
-        User currentUser = userRepository.findByEmailIgnoreCase(email)
+        User issuer = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        // Get the target employee
+        User targetEmployee = userRepository.findById(request.getUserId())
+                .orElseThrow(() -> new ResourceNotFoundException("User", request.getUserId()));
 
         // Validate workedOn is a holiday or weekend (simplified for now)
         // In production, check against holiday calendar and weekend logic
 
         CompOffRequest compOffRequest = new CompOffRequest();
-        compOffRequest.setUser(currentUser);
+        compOffRequest.setUser(targetEmployee);
         compOffRequest.setWorkedOn(request.getWorkedOn());
         compOffRequest.setReason(request.getReason());
         compOffRequest.setHoursWorked(BigDecimal.valueOf(request.getHoursWorked()));
@@ -79,40 +87,30 @@ public class CompOffController {
         double daysCredited = request.getHoursWorked() >= 8 ? 1.0 : 0.5;
         compOffRequest.setDaysCredited(BigDecimal.valueOf(daysCredited));
         
-        compOffRequest.setStatus(CompOffRequest.RequestStatus.PENDING);
+        // Auto-set status to GRANTED when created by manager
+        compOffRequest.setStatus(CompOffRequest.RequestStatus.GRANTED);
         compOffRequest.setCreatedAt(LocalDateTime.now());
 
-        // Set expiry date (e.g., 90 days from workedOn as per policy)
-        compOffRequest.setExpiryDate(request.getWorkedOn().plusDays(90));
+        // Use the expiry date from the request
+        compOffRequest.setExpiryDate(request.getExpiryDate());
 
-        // Set approver to user's manager
-        if (currentUser.getReportsTo() != null) {
-            compOffRequest.setApprover(currentUser.getReportsTo());
-        }
+        // Set issuer to the current user (manager/HR)
+        compOffRequest.setIssuer(issuer);
 
         CompOffRequest saved = compOffRequestRepository.save(compOffRequest);
         
-        // Create notification for the user
+        // Credit the leave ledger with comp-off days
+        creditLeaveLedger(targetEmployee, saved.getDaysCredited(), saved.getExpiryDate(), saved.getId());
+        
+        // Create notification for the employee
         createNotification(
                 saved.getUser(),
-                "COMP_OFF_SUBMITTED",
-                "Comp-Off Request Submitted",
-                "Your comp-off request for " + saved.getWorkedOn() + " has been submitted.",
-                "COMP_OFF_REQUEST",
+                "COMP_OFF_GRANTED",
+                "Comp-Off Credit Granted",
+                "You have been granted " + saved.getDaysCredited() + " comp-off day(s) for " + saved.getWorkedOn() + ". Valid until " + saved.getExpiryDate() + ".",
+                "COMP_OFF_GRANTED",
                 saved.getId()
         );
-        
-        // Create notification for the approver if exists
-        if (saved.getApprover() != null) {
-            createNotification(
-                    saved.getApprover(),
-                    "COMP_OFF_APPROVAL_PENDING",
-                    "Comp-Off Approval Required",
-                    "A comp-off request from " + saved.getUser().getName() + " requires your approval.",
-                    "COMP_OFF_APPROVAL",
-                    saved.getId()
-            );
-        }
         
         CompOffRequestDto dto = toCompOffRequestDto(saved);
         
@@ -184,6 +182,9 @@ public class CompOffController {
         return ResponseEntity.ok(dto);
     }
 
+    // DEPRECATED: This endpoint is no longer needed as comp-off requests are now directly granted by managers
+    // Kept for backward compatibility but should be removed in future versions
+    @Deprecated
     @PatchMapping("/{compId}/decisions")
     @RequireRole({"MANAGER", "HR_ADMIN"})
     @Transactional
@@ -309,8 +310,73 @@ public class CompOffController {
             dto.setApproverAvatarUrl(attachmentService.resolveAvatarUrl(request.getApprover().getId()));
         }
         
+        if (request.getIssuer() != null) {
+            dto.setIssuerId(request.getIssuer().getId().intValue());
+            dto.setIssuerName(request.getIssuer().getName());
+            // Resolve issuer avatar URL
+            dto.setIssuerAvatarUrl(attachmentService.resolveAvatarUrl(request.getIssuer().getId()));
+        }
+        
         dto.setCreatedAt(request.getCreatedAt());
         return dto;
+    }
+
+    private void creditLeaveLedger(User user, BigDecimal daysCredited, LocalDate expiryDate, Long compOffRequestId) {
+        // Find the comp-off leave category
+        // Try to find by category code first, then by name
+        Optional<com.lms.Leave_Management_System_Backend.model.LeaveCategory> compOffCategory = 
+            leaveCategoryRepository.findByCategoryCode("COMP_OFF");
+        
+        if (compOffCategory.isEmpty()) {
+            // Try to find by name if category code doesn't exist
+            compOffCategory = leaveCategoryRepository.findAll().stream()
+                .filter(c -> "Compensatory Off".equalsIgnoreCase(c.getCategoryName()) || 
+                           "Comp Off".equalsIgnoreCase(c.getCategoryName()) ||
+                           "Comp-Off".equalsIgnoreCase(c.getCategoryName()))
+                .findFirst();
+        }
+        
+        if (compOffCategory.isEmpty()) {
+            throw new ResourceNotFoundException("LeaveCategory", "Comp-Off category not found");
+        }
+        
+        com.lms.Leave_Management_System_Backend.model.LeaveCategory category = compOffCategory.get();
+        
+        // Determine fiscal year based on expiry date
+        int fiscalYear = expiryDate.getYear();
+        
+        // Find or create ledger entry
+        Optional<LeaveLedger> existingLedger = leaveLedgerRepository
+            .findByUserIdAndCategoryIdAndFiscalYear(user.getId(), category.getId(), fiscalYear);
+        
+        LeaveLedger ledger;
+        if (existingLedger.isPresent()) {
+            ledger = existingLedger.get();
+        } else {
+            // Create new ledger entry
+            ledger = new LeaveLedger();
+            ledger.setUser(user);
+            ledger.setCategory(category);
+            ledger.setFiscalYear(fiscalYear);
+            ledger.setOpeningBalance(BigDecimal.ZERO);
+            ledger.setAccrued(BigDecimal.ZERO);
+            ledger.setUsed(BigDecimal.ZERO);
+            ledger.setEncashed(BigDecimal.ZERO);
+            ledger.setCarriedForward(BigDecimal.ZERO);
+            ledger.setClosingBalance(BigDecimal.ZERO);
+        }
+        
+        // Update the ledger with the comp-off credit
+        BigDecimal newAccrued = ledger.getAccrued().add(daysCredited);
+        ledger.setAccrued(newAccrued);
+        ledger.setClosingBalance(ledger.getClosingBalance().add(daysCredited));
+        ledger.setTransactionDate(LocalDate.now());
+        ledger.setTransactionType("CREDIT");
+        ledger.setReferenceType("COMP_OFF_REQUEST");
+        ledger.setReferenceId(compOffRequestId);
+        ledger.setDescription("Comp-off credit granted - Valid until " + expiryDate);
+        
+        leaveLedgerRepository.save(ledger);
     }
 
     // ============================================================

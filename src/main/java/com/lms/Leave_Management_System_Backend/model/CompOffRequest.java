@@ -44,8 +44,12 @@ public class CompOffRequest {
     @JoinColumn(name = "approver_id")
     private User approver;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "issuer_id")
+    private User issuer;
+
     public enum RequestStatus {
-        PENDING, APPROVED, REJECTED, EXPIRED
+        PENDING, APPROVED, GRANTED, REJECTED, EXPIRED
     }
 
     public CompOffRequest() {
@@ -121,6 +125,14 @@ public class CompOffRequest {
 
     public void setApprover(User approver) {
         this.approver = approver;
+    }
+
+    public User getIssuer() {
+        return issuer;
+    }
+
+    public void setIssuer(User issuer) {
+        this.issuer = issuer;
     }
 
     public LocalDateTime getCreatedAt() {

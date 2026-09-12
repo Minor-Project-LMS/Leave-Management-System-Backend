@@ -16,6 +16,9 @@ public class CompOffRequestDto {
     private Integer approverId;
     private String approverName;
     private String approverAvatarUrl;
+    private Integer issuerId;
+    private String issuerName;
+    private String issuerAvatarUrl;
     private String userAvatarUrl;
     private LocalDateTime createdAt;
 
@@ -117,6 +120,30 @@ public class CompOffRequestDto {
 
     public void setApproverAvatarUrl(String approverAvatarUrl) {
         this.approverAvatarUrl = approverAvatarUrl;
+    }
+
+    public Integer getIssuerId() {
+        return issuerId;
+    }
+
+    public void setIssuerId(Integer issuerId) {
+        this.issuerId = issuerId;
+    }
+
+    public String getIssuerName() {
+        return issuerName;
+    }
+
+    public void setIssuerName(String issuerName) {
+        this.issuerName = issuerName;
+    }
+
+    public String getIssuerAvatarUrl() {
+        return issuerAvatarUrl;
+    }
+
+    public void setIssuerAvatarUrl(String issuerAvatarUrl) {
+        this.issuerAvatarUrl = issuerAvatarUrl;
     }
 
     public String getUserAvatarUrl() {
