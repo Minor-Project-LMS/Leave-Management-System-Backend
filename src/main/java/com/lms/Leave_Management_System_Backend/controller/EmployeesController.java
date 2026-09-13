@@ -14,6 +14,7 @@ import com.lms.Leave_Management_System_Backend.security.RequireRole;
 import com.lms.Leave_Management_System_Backend.service.AttachmentService;
 import com.lms.Leave_Management_System_Backend.service.LeaveLedgerProvisioningService;
 import jakarta.validation.Valid;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -70,24 +71,8 @@ public class EmployeesController {
             Authentication authentication) {
 
         Pageable pageable = PageRequest.of(page - 1, limit, Sort.by("fullName").ascending());
-        Page<User> employees;
 
-        // Apply filters based on parameters
-        if (q != null && !q.isBlank()) {
-            // Search across name only (simplified) - would need custom query
-            employees = userRepository.findAll(pageable);
-        } else if (departmentId != null) {
-            // Simplified - would need department repository
-            employees = userRepository.findAll(pageable);
-        } else if (designation != null) {
-            // Simplified - would need custom query
-            employees = userRepository.findAll(pageable);
-        } else if (status != null) {
-            // Simplified - would need custom query with Pageable
-            employees = userRepository.findAll(pageable);
-        } else {
-            employees = userRepository.findAll(pageable);
-        }
+        Page<User> employees = userRepository.findEmployeeDirectory(departmentId, designation, status, q, pageable);
 
         List<UserDto> dtos = employees.getContent().stream()
                 .map(this::toUserDto)
@@ -106,7 +91,7 @@ public class EmployeesController {
     @PostMapping
     @RequireRole({"HR_ADMIN"})
     public ResponseEntity<UserDto> createEmployee(
-            @Valid @RequestBody EmployeeInput employeeInput,
+            @Validated(EmployeeInput.OnCreate.class) @RequestBody EmployeeInput employeeInput,
             Authentication authentication) {
 
         if (userRepository.findByEmailIgnoreCase(employeeInput.getEmail()).isPresent()) {
@@ -179,7 +164,7 @@ public class EmployeesController {
     @RequireRole({"HR_ADMIN"})
     public ResponseEntity<UserDto> updateEmployee(
             @PathVariable Long employeeId,
-            @Valid @RequestBody EmployeeInput employeeInput,
+            @Validated(EmployeeInput.OnUpdate.class) @RequestBody EmployeeInput employeeInput,
             Authentication authentication) {
 
         User user = userRepository.findWithReportsToById(employeeId.longValue())
@@ -205,6 +190,22 @@ public class EmployeesController {
         if (employeeInput.getRole() != null) {
             Role role = roleRepository.findByRoleCode(employeeInput.getRole())
                     .orElseThrow(() -> new ResourceNotFoundException("Role", employeeInput.getRole()));
+
+            // If the role change moves the employee into a different
+            // code series (EMP/MGR/HR), regenerate their employee code to
+            // match — e.g. an EMPLOYEE promoted to MANAGER should read
+            // MGR### afterward, not keep their old EMP### code. Only
+            // regenerate when the prefix actually changes, so repeated
+            // saves with the same role don't burn through the sequence.
+            String oldRoleCode = user.getRole() != null ? user.getRole().getRoleCode() : null;
+            if (!employeeInput.getRole().equals(oldRoleCode)) {
+                String oldPrefix = employeeCodePrefixForRole(oldRoleCode);
+                String newPrefix = employeeCodePrefixForRole(employeeInput.getRole());
+                if (!newPrefix.equals(oldPrefix)) {
+                    user.setEmployeeCode(generateNextEmployeeCode(employeeInput.getRole()));
+                }
+            }
+
             user.setRole(role);
         }
         if (employeeInput.getDepartmentId() != null) {
