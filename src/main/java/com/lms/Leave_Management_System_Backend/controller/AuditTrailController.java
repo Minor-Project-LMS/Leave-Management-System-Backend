@@ -4,8 +4,11 @@ import com.lms.Leave_Management_System_Backend.dto.AuditLogEntry;
 import com.lms.Leave_Management_System_Backend.dto.AuditLogEntryDetail;
 import com.lms.Leave_Management_System_Backend.dto.PaginatedResponse;
 import com.lms.Leave_Management_System_Backend.dto.PageResponse;
+import com.lms.Leave_Management_System_Backend.exception.ResourceNotFoundException;
 import com.lms.Leave_Management_System_Backend.model.AuditTrail;
+import com.lms.Leave_Management_System_Backend.model.User;
 import com.lms.Leave_Management_System_Backend.repository.AuditTrailRepository;
+import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -32,6 +35,9 @@ public class AuditTrailController {
     @Autowired
     private AuditTrailRepository auditTrailRepository;
 
+    @Autowired
+    private UserRepository userRepository;
+
     @GetMapping
     @RequireRole({"HR_ADMIN"})
     public ResponseEntity<PaginatedResponse<AuditLogEntry>> searchAuditLog(
@@ -46,9 +52,9 @@ public class AuditTrailController {
             Authentication authentication) {
 
         Pageable pageable = PageRequest.of(page - 1, limit, Sort.by("performedAt").descending());
-        
+
         Page<AuditTrail> auditTrailPage;
-        
+
         // Build query based on filters using specification
         if (dateFrom != null || dateTo != null || userId != null || action != null || entityType != null || q != null) {
             auditTrailPage = auditTrailRepository.findAll((root, query, cb) -> {
@@ -91,13 +97,13 @@ public class AuditTrailController {
         } else {
             auditTrailPage = auditTrailRepository.findAll(pageable);
         }
-        
+
         List<AuditLogEntry> entries = auditTrailPage.getContent().stream()
                 .map(this::convertToDto)
                 .collect(Collectors.toList());
 
         PageResponse pageResponse = new PageResponse(page, limit, (int) auditTrailPage.getTotalElements(), auditTrailPage.getTotalPages());
-        
+
         return ResponseEntity.ok(new PaginatedResponse<>(true, entries, pageResponse));
     }
 
@@ -107,10 +113,19 @@ public class AuditTrailController {
             @RequestParam(defaultValue = "10") int limit,
             Authentication authentication) {
 
+        // This powers the "Recent Activity" widget on an individual's own
+        // dashboard, not an org-wide audit feed — it was previously
+        // pulling every audit entry system-wide regardless of who was
+        // logged in, so any employee would see other people's leave
+        // approvals, HR policy edits, etc. on their personal dashboard.
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
         Pageable pageable = PageRequest.of(0, limit, Sort.by("performedAt").descending());
-        
-        Page<AuditTrail> recentEntries = auditTrailRepository.findAll(pageable);
-        
+
+        Page<AuditTrail> recentEntries = auditTrailRepository.findByPerformedById(currentUser.getId(), pageable);
+
         List<AuditLogEntry> entries = recentEntries.getContent().stream()
                 .map(this::convertToDto)
                 .collect(Collectors.toList());

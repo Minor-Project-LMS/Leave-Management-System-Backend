@@ -111,6 +111,12 @@ public class LeaveRequestsController {
         if (request.getStatus() != null && "DRAFT".equals(request.getStatus())) {
             leaveRequest.setStatus(LeaveRequest.RequestStatus.DRAFT);
         } else {
+            // This is where a request actually starts competing for
+            // approval, so this is where LOP gets calculated and
+            // overlapping pending/approved requests get rejected — a
+            // DRAFT save skips all of this since it isn't submitted yet.
+            applyPendingSubmissionChecks(leaveRequest, user);
+
             leaveRequest.setStatus(LeaveRequest.RequestStatus.PENDING_L1);
 
             // Set the approver when creating a non-DRAFT request
@@ -179,6 +185,61 @@ public class LeaveRequestsController {
             return BigDecimal.valueOf(calendarDays * 0.5);
         } else {
             return BigDecimal.valueOf(calendarDays);
+        }
+    }
+
+    private boolean datesOverlap(LeaveRequest a, LeaveRequest b) {
+        return !(a.getEndDate().isBefore(b.getStartDate()) || a.getStartDate().isAfter(b.getEndDate()));
+    }
+
+    // Runs everything a leave request needs once it's actually competing
+    // for approval (as opposed to sitting as a draft): computes the
+    // Loss-of-Pay split against the current balance, and rejects it if it
+    // overlaps another pending or approved request for the same employee.
+    // Shared by createLeaveRequest() (the normal "Apply Leave" submit path)
+    // and submitLeaveRequest() (converting an existing draft to pending),
+    // so the two can't drift out of sync the way they previously did.
+    private void applyPendingSubmissionChecks(LeaveRequest leaveRequest, User currentUser) {
+        int currentYear = java.time.Year.now().getValue();
+        leaveLedgerProvisioningService.getOrInitializeLedger(currentUser, currentYear);
+        Optional<LeaveLedger> ledger = leaveLedgerRepository.findByUserIdAndCategoryIdAndFiscalYear(
+                leaveRequest.getUser().getId(),
+                leaveRequest.getCategory().getId(),
+                currentYear
+        );
+
+        BigDecimal availableBalance = ledger.map(LeaveLedger::getClosingBalance).orElse(BigDecimal.ZERO);
+        BigDecimal lopDays = leaveRequest.getTotalDays().subtract(availableBalance);
+        leaveRequest.setLopDays(lopDays.compareTo(BigDecimal.ZERO) > 0 ? lopDays : BigDecimal.ZERO);
+
+        // Check for an overlapping request already in flight — either a
+        // pending one awaiting approval, or one that's already approved.
+        // Checking these separately gives a clearer message: pending vs.
+        // approved mean different things to the employee.
+        List<LeaveRequest> overlappingPending = leaveRequestRepository.findByUserIdAndStatusIn(
+                leaveRequest.getUser().getId(),
+                List.of(LeaveRequest.RequestStatus.PENDING_L1, LeaveRequest.RequestStatus.PENDING_L2)
+        );
+        boolean hasPendingOverlap = overlappingPending.stream()
+                .filter(existing -> leaveRequest.getId() == null || !existing.getId().equals(leaveRequest.getId()))
+                .anyMatch(existing -> datesOverlap(existing, leaveRequest));
+
+        if (hasPendingOverlap) {
+            throw new ConflictException("You have already submitted a leave request that is pending approval for this date.");
+        }
+
+        // Check for overlapping approved requests
+        List<LeaveRequest> overlappingApproved = leaveRequestRepository.findByUserIdAndStatus(
+                leaveRequest.getUser().getId(),
+                LeaveRequest.RequestStatus.APPROVED
+        );
+
+        boolean hasOverlap = overlappingApproved.stream()
+                .filter(existing -> leaveRequest.getId() == null || !existing.getId().equals(leaveRequest.getId()))
+                .anyMatch(existing -> datesOverlap(existing, leaveRequest));
+
+        if (hasOverlap) {
+            throw new ConflictException("Your leave request is already approved for this date.");
         }
     }
 
@@ -371,40 +432,7 @@ public class LeaveRequestsController {
         // Validate max continuous days limit according to policy
         validateConsecutiveDays(currentUser, leaveRequest.getCategory(), leaveRequest.getTotalDays());
 
-        // Check leave balance — rather than blocking the request outright,
-        // any days beyond what's available are marked as Loss of Pay (LOP):
-        // the request still goes through, but the LOP portion won't be
-        // deducted from the leave ledger later (see approveLeaveRequest),
-        // and the employee/approver can see upfront that pay will be
-        // affected for those days.
-        int currentYear = java.time.Year.now().getValue();
-        leaveLedgerProvisioningService.getOrInitializeLedger(currentUser, currentYear);
-        Optional<LeaveLedger> ledger = leaveLedgerRepository.findByUserIdAndCategoryIdAndFiscalYear(
-                leaveRequest.getUser().getId(),
-                leaveRequest.getCategory().getId(),
-                currentYear
-        );
-
-        BigDecimal availableBalance = ledger.map(LeaveLedger::getClosingBalance).orElse(BigDecimal.ZERO);
-        BigDecimal lopDays = leaveRequest.getTotalDays().subtract(availableBalance);
-        leaveRequest.setLopDays(lopDays.compareTo(BigDecimal.ZERO) > 0 ? lopDays : BigDecimal.ZERO);
-
-        // Check for overlapping approved requests
-        List<LeaveRequest> overlappingApproved = leaveRequestRepository.findByUserIdAndStatus(
-                leaveRequest.getUser().getId(),
-                LeaveRequest.RequestStatus.APPROVED
-        );
-
-        // Filter for overlapping dates
-        boolean hasOverlap = overlappingApproved.stream()
-                .anyMatch(existing -> {
-                    return !(existing.getEndDate().isBefore(leaveRequest.getStartDate()) ||
-                            existing.getStartDate().isAfter(leaveRequest.getEndDate()));
-                });
-
-        if (hasOverlap) {
-            throw new ConflictException("You have overlapping approved leave requests for this period");
-        }
+        applyPendingSubmissionChecks(leaveRequest, currentUser);
 
         // Set to pending and assign approver
         leaveRequest.setStatus(LeaveRequest.RequestStatus.PENDING_L1);
@@ -482,24 +510,14 @@ public class LeaveRequestsController {
             throw new ConflictException("Comments are mandatory on rejection");
         }
 
-        // Check for overlapping approved requests for the same user
-        if ("APPROVED".equals(decisionRequest.getDecision())) {
-            List<LeaveRequest> overlappingApproved = leaveRequestRepository.findByUserIdAndStatus(
-                    leaveRequest.getUser().getId(),
-                    LeaveRequest.RequestStatus.APPROVED
-            );
-
-            boolean hasOverlap = overlappingApproved.stream()
-                    .filter(existing -> !existing.getId().equals(leaveRequest.getId()))
-                    .anyMatch(existing -> {
-                        return !(existing.getEndDate().isBefore(leaveRequest.getStartDate()) ||
-                                existing.getStartDate().isAfter(leaveRequest.getEndDate()));
-                    });
-
-            if (hasOverlap) {
-                throw new ConflictException("Employee has overlapping approved leave requests for this period");
-            }
-        }
+        // Note: the overlapping-approved-leave check intentionally lives
+        // only in submitLeaveRequest() (employee-side), not here. It's a
+        // restriction on what an employee can submit, not a gate on what
+        // an approver can approve — a request that made it to the
+        // approval queue already passed that check once, and re-enforcing
+        // it here just blocks legitimate approvals (e.g. an earlier
+        // approved request that's since been cancelled/withdrawn) for no
+        // benefit.
 
         // Record the approval history
         LeaveApproval approval = new LeaveApproval();

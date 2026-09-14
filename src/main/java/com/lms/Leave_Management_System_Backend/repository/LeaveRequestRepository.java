@@ -29,6 +29,9 @@ public interface LeaveRequestRepository extends JpaRepository<LeaveRequest, Long
     List<LeaveRequest> findByUserIdAndStatus(Long userId, LeaveRequest.RequestStatus status);
 
     @EntityGraph(attributePaths = {"user", "category", "currentApprover", "handoverTo"})
+    List<LeaveRequest> findByUserIdAndStatusIn(Long userId, List<LeaveRequest.RequestStatus> statuses);
+
+    @EntityGraph(attributePaths = {"user", "category", "currentApprover", "handoverTo"})
     Page<LeaveRequest> findByStatus(LeaveRequest.RequestStatus status, Pageable pageable);
 
     @EntityGraph(attributePaths = {"user", "category", "currentApprover", "handoverTo"})

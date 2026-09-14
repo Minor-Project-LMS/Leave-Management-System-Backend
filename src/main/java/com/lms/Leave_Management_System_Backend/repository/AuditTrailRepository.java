@@ -14,19 +14,22 @@ import java.util.List;
 
 @Repository
 public interface AuditTrailRepository extends JpaRepository<AuditTrail, Long>, JpaSpecificationExecutor<AuditTrail> {
-    
+
     @EntityGraph(attributePaths = {"performedBy"})
     List<AuditTrail> findByEntityType(String entityType);
-    
+
     @EntityGraph(attributePaths = {"performedBy"})
     List<AuditTrail> findByEntityTypeAndEntityId(String entityType, Long entityId);
-    
+
     @EntityGraph(attributePaths = {"performedBy"})
     List<AuditTrail> findByPerformedById(Long performedById);
-    
+
+    @EntityGraph(attributePaths = {"performedBy"})
+    Page<AuditTrail> findByPerformedById(Long performedById, Pageable pageable);
+
     @EntityGraph(attributePaths = {"performedBy"})
     List<AuditTrail> findByAction(AuditTrail.AuditAction action);
-    
+
     @EntityGraph(attributePaths = {"performedBy"})
     List<AuditTrail> findByEntityTypeAndEntityIdOrderByPerformedAtDesc(String entityType, Long entityId);
 
