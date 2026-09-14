@@ -14,7 +14,8 @@ import java.time.LocalDateTime;
         @jakarta.persistence.Index(name = "idx_status", columnList = "status"),
         @jakarta.persistence.Index(name = "idx_start_date", columnList = "start_date"),
         @jakarta.persistence.Index(name = "idx_end_date", columnList = "end_date"),
-        @jakarta.persistence.Index(name = "idx_user_status", columnList = "user_id, status")
+        @jakarta.persistence.Index(name = "idx_user_status", columnList = "user_id, status"),
+        @jakarta.persistence.Index(name = "idx_comp_off_request_id", columnList = "comp_off_request_id")
     }
 )
 public class LeaveRequest {
@@ -74,6 +75,10 @@ public class LeaveRequest {
 
     @Column(name = "applied_at")
     private LocalDateTime appliedAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "comp_off_request_id")
+    private CompOffRequest compOffRequest;
 
     public enum SessionType {
         FULL_DAY, FIRST_HALF, SECOND_HALF
@@ -212,5 +217,13 @@ public class LeaveRequest {
 
     public void setAppliedAt(LocalDateTime appliedAt) {
         this.appliedAt = appliedAt;
+    }
+
+    public CompOffRequest getCompOffRequest() {
+        return compOffRequest;
+    }
+
+    public void setCompOffRequest(CompOffRequest compOffRequest) {
+        this.compOffRequest = compOffRequest;
     }
 }

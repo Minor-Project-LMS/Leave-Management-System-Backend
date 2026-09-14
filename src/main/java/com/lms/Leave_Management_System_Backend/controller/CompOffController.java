@@ -4,15 +4,8 @@ import com.lms.Leave_Management_System_Backend.dto.*;
 import com.lms.Leave_Management_System_Backend.exception.ConflictException;
 import com.lms.Leave_Management_System_Backend.exception.ResourceNotFoundException;
 import com.lms.Leave_Management_System_Backend.exception.SecurityException;
-import com.lms.Leave_Management_System_Backend.model.CompOffRequest;
-import com.lms.Leave_Management_System_Backend.model.LeaveLedger;
-import com.lms.Leave_Management_System_Backend.model.NotificationQueue;
-import com.lms.Leave_Management_System_Backend.model.User;
-import com.lms.Leave_Management_System_Backend.repository.CompOffRequestRepository;
-import com.lms.Leave_Management_System_Backend.repository.LeaveCategoryRepository;
-import com.lms.Leave_Management_System_Backend.repository.LeaveLedgerRepository;
-import com.lms.Leave_Management_System_Backend.repository.NotificationQueueRepository;
-import com.lms.Leave_Management_System_Backend.repository.UserRepository;
+import com.lms.Leave_Management_System_Backend.model.*;
+import com.lms.Leave_Management_System_Backend.repository.*;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
 import com.lms.Leave_Management_System_Backend.service.AttachmentService;
 import jakarta.validation.Valid;
@@ -43,6 +36,8 @@ public class CompOffController {
     private final LeaveCategoryRepository leaveCategoryRepository;
     private final NotificationQueueRepository notificationQueueRepository;
     private final AttachmentService attachmentService;
+    private final LeaveRequestRepository leaveRequestRepository;
+    private final ApprovalDelegationRepository delegationRepository;
 
     public CompOffController(
             CompOffRequestRepository compOffRequestRepository,
@@ -50,13 +45,17 @@ public class CompOffController {
             LeaveLedgerRepository leaveLedgerRepository,
             LeaveCategoryRepository leaveCategoryRepository,
             NotificationQueueRepository notificationQueueRepository,
-            AttachmentService attachmentService) {
+            AttachmentService attachmentService,
+            LeaveRequestRepository leaveRequestRepository,
+            ApprovalDelegationRepository delegationRepository) {
         this.compOffRequestRepository = compOffRequestRepository;
         this.userRepository = userRepository;
         this.leaveLedgerRepository = leaveLedgerRepository;
         this.leaveCategoryRepository = leaveCategoryRepository;
         this.notificationQueueRepository = notificationQueueRepository;
         this.attachmentService = attachmentService;
+        this.leaveRequestRepository = leaveRequestRepository;
+        this.delegationRepository = delegationRepository;
     }
 
     @PostMapping
@@ -65,7 +64,7 @@ public class CompOffController {
     public ResponseEntity<CompOffRequestDto> createCompOffRequest(
             @Valid @RequestBody CompOffRequestCreate request,
             Authentication authentication) {
-        
+
         String email = authentication.getName();
         User issuer = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
@@ -73,6 +72,11 @@ public class CompOffController {
         // Get the target employee
         User targetEmployee = userRepository.findById(request.getUserId())
                 .orElseThrow(() -> new ResourceNotFoundException("User", request.getUserId()));
+
+        // Validate authorization: issuer must be the target's reporting manager or HR_ADMIN
+        if (!isAuthorizedToGrant(issuer, targetEmployee)) {
+            throw new SecurityException("You are not authorized to grant comp-off to this employee");
+        }
 
         // Validate workedOn is a holiday or weekend (simplified for now)
         // In production, check against holiday calendar and weekend logic
@@ -82,13 +86,13 @@ public class CompOffController {
         compOffRequest.setWorkedOn(request.getWorkedOn());
         compOffRequest.setReason(request.getReason());
         compOffRequest.setHoursWorked(BigDecimal.valueOf(request.getHoursWorked()));
-        
+
         // Derive daysCredited from hoursWorked per policy (typically 0.5 or 1.0)
         double daysCredited = request.getHoursWorked() >= 8 ? 1.0 : 0.5;
         compOffRequest.setDaysCredited(BigDecimal.valueOf(daysCredited));
-        
-        // Auto-set status to GRANTED when created by manager
-        compOffRequest.setStatus(CompOffRequest.RequestStatus.GRANTED);
+
+        // Auto-set status to APPROVED when created by manager (new workflow)
+        compOffRequest.setStatus(CompOffRequest.RequestStatus.APPROVED);
         compOffRequest.setCreatedAt(LocalDateTime.now());
 
         // Use the expiry date from the request
@@ -98,10 +102,10 @@ public class CompOffController {
         compOffRequest.setIssuer(issuer);
 
         CompOffRequest saved = compOffRequestRepository.save(compOffRequest);
-        
+
         // Credit the leave ledger with comp-off days
         creditLeaveLedger(targetEmployee, saved.getDaysCredited(), saved.getExpiryDate(), saved.getId());
-        
+
         // Create notification for the employee
         createNotification(
                 saved.getUser(),
@@ -111,32 +115,55 @@ public class CompOffController {
                 "COMP_OFF_GRANTED",
                 saved.getId()
         );
-        
+
         CompOffRequestDto dto = toCompOffRequestDto(saved);
-        
+
         return ResponseEntity.status(201).body(dto);
     }
 
     @GetMapping
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional(readOnly = true)
     public ResponseEntity<CompOffListResponse> listCompOffRequests(
             @RequestParam(required = false) String status,
             @RequestParam(required = false) Long userId,
+            @RequestParam(required = false) Boolean hasBalance,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int limit,
             @RequestParam(required = false) String sort,
             Authentication authentication) {
 
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
         // If userId not provided, use current user for employees
         if (userId == null) {
-            String email = authentication.getName();
-            User currentUser = userRepository.findByEmailIgnoreCase(email)
-                    .orElseThrow(() -> new ResourceNotFoundException("User", email));
             userId = currentUser.getId();
+        } else {
+            // For managers/HR, validate they can view the requested user's grants
+            if (!currentUser.getRole().getRoleCode().equals("HR_ADMIN")) {
+                Long finalUserId = userId;
+                User targetUser = userRepository.findById(userId)
+                        .orElseThrow(() -> new ResourceNotFoundException("User", finalUserId));
+
+                if (currentUser.getRole().getRoleCode().equals("MANAGER")) {
+                    // Check if target is a direct report
+                    if (targetUser.getReportsTo() == null ||
+                            !targetUser.getReportsTo().getId().equals(currentUser.getId())) {
+                        throw new SecurityException("You can only view comp-off grants for your direct reports");
+                    }
+                } else {
+                    // Employees can only view their own
+                    if (!userId.equals(currentUser.getId())) {
+                        throw new SecurityException("You can only view your own comp-off grants");
+                    }
+                }
+            }
         }
 
         Pageable pageable = PageRequest.of(page - 1, limit,
-            sort != null ? Sort.by(sort) : Sort.by("createdAt").descending());
+                sort != null ? Sort.by(sort) : Sort.by("createdAt").descending());
 
         Page<CompOffRequest> requests;
         CompOffRequest.RequestStatus statusEnum = null;
@@ -149,10 +176,17 @@ public class CompOffController {
             }
         }
 
-        if (statusEnum != null) {
-            requests = compOffRequestRepository.findByUserIdAndStatus(userId, statusEnum, pageable);
+        LocalDate today = LocalDate.now();
+
+        if (hasBalance != null && hasBalance) {
+            requests = compOffRequestRepository.findWithFiltersAndBalance(
+                    userId, statusEnum, hasBalance, today, pageable);
         } else {
-            requests = compOffRequestRepository.findByUserId(userId, pageable);
+            if (statusEnum != null) {
+                requests = compOffRequestRepository.findByUserIdAndStatus(userId, statusEnum, pageable);
+            } else {
+                requests = compOffRequestRepository.findByUserId(userId, pageable);
+            }
         }
 
         List<CompOffRequestDto> dtoList = requests.getContent().stream()
@@ -172,96 +206,11 @@ public class CompOffController {
 
     @GetMapping("/{compId}")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
-    public ResponseEntity<CompOffRequestDto> getCompOffRequest(
-            @PathVariable Long compId) {
-        
-        CompOffRequest request = compOffRequestRepository.findById(compId)
-                .orElseThrow(() -> new ResourceNotFoundException("CompOffRequest", compId));
-        
-        CompOffRequestDto dto = toCompOffRequestDto(request);
-        return ResponseEntity.ok(dto);
-    }
-
-    // DEPRECATED: This endpoint is no longer needed as comp-off requests are now directly granted by managers
-    // Kept for backward compatibility but should be removed in future versions
-    @Deprecated
-    @PatchMapping("/{compId}/decisions")
-    @RequireRole({"MANAGER", "HR_ADMIN"})
-    @Transactional
-    public ResponseEntity<CompOffRequestDto> makeDecision(
-            @PathVariable Long compId,
-            @RequestBody CompOffDecisionRequest decisionRequest,
-            Authentication authentication) {
-        
-        String email = authentication.getName();
-        User approver = userRepository.findByEmailIgnoreCase(email)
-                .orElseThrow(() -> new ResourceNotFoundException("User", email));
-
-        CompOffRequest request = compOffRequestRepository.findById(compId)
-                .orElseThrow(() -> new ResourceNotFoundException("CompOffRequest", compId));
-
-        if (request.getStatus() != CompOffRequest.RequestStatus.PENDING) {
-            throw new ConflictException("Only pending requests can be decided");
-        }
-
-        // Validate decision enum values match contract
-        if (!"APPROVED".equals(decisionRequest.getDecision()) && !"REJECTED".equals(decisionRequest.getDecision())) {
-            throw new ConflictException("Invalid decision. Must be APPROVED or REJECTED");
-        }
-
-        if ("APPROVED".equals(decisionRequest.getDecision())) {
-            request.setStatus(CompOffRequest.RequestStatus.APPROVED);
-            request.setApprover(approver);
-            
-            // Credit leave ledger with comp-off days
-            int currentYear = Year.now().getValue();
-            // Find or create leave ledger entry for comp-off category
-            // Assuming comp-off category ID is known (e.g., 6 or similar)
-            // For now, we'll use a generic approach
-            
-            // Credit the leave ledger
-            // This is a simplified implementation - in production, you'd need to:
-            // 1. Find the comp-off leave category
-            // 2. Find or create the ledger entry for the user/year/category
-            // 3. Update accrued and closing_balance
-            
-            // Create notification for the user
-            createNotification(
-                    request.getUser(),
-                    "COMP_OFF_APPROVED",
-                    "Comp-Off Request Approved",
-                    "Your comp-off request for " + request.getWorkedOn() + " has been approved.",
-                    "COMP_OFF_APPROVAL",
-                    request.getId()
-            );
-            
-        } else if ("REJECTED".equals(decisionRequest.getDecision())) {
-            request.setStatus(CompOffRequest.RequestStatus.REJECTED);
-            request.setApprover(approver);
-            
-            // Create notification for the user
-            createNotification(
-                    request.getUser(),
-                    "COMP_OFF_REJECTED",
-                    "Comp-Off Request Rejected",
-                    "Your comp-off request for " + request.getWorkedOn() + " has been rejected.",
-                    "COMP_OFF_APPROVAL",
-                    request.getId()
-            );
-        }
-
-        CompOffRequest saved = compOffRequestRepository.save(request);
-        CompOffRequestDto dto = toCompOffRequestDto(saved);
-        
-        return ResponseEntity.ok(dto);
-    }
-
-    @DeleteMapping("/{compId}")
-    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
-    public ResponseEntity<Void> deleteCompOffRequest(
+    @Transactional(readOnly = true)
+    public ResponseEntity<CompOffRequestDetailDto> getCompOffRequest(
             @PathVariable Long compId,
             Authentication authentication) {
-        
+
         String email = authentication.getName();
         User currentUser = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
@@ -269,86 +218,316 @@ public class CompOffController {
         CompOffRequest request = compOffRequestRepository.findById(compId)
                 .orElseThrow(() -> new ResourceNotFoundException("CompOffRequest", compId));
 
-        // Only allow withdrawal if PENDING
-        if (request.getStatus() != CompOffRequest.RequestStatus.PENDING) {
-            throw new ConflictException("Only pending requests can be withdrawn");
+        // Check access permissions
+        if (!canAccessCompOffRequest(request, currentUser)) {
+            throw new SecurityException("You are not authorized to view this comp-off request");
         }
 
-        // Check ownership
-        if (!request.getUser().getId().equals(currentUser.getId())) {
-            throw new SecurityException("You can only withdraw your own comp-off requests");
+        CompOffRequestDetailDto dto = toCompOffRequestDetailDto(request);
+
+        // Load linked leave requests
+        List<LeaveRequest> linkedRequests = leaveRequestRepository.findByCompOffRequestId(compId);
+        dto.setLinkedLeaveRequests(linkedRequests.stream()
+                .map(this::toLeaveRequestDto)
+                .collect(Collectors.toList()));
+
+        // Load attachments
+        dto.setAttachments(attachmentService.listAttachments(
+                Attachment.EntityType.COMP_OFF_REQUEST,
+                compId
+        ));
+
+        return ResponseEntity.ok(dto);
+    }
+
+    @DeleteMapping("/{compId}")
+    @RequireRole({"MANAGER", "HR_ADMIN"})
+    @Transactional
+    public ResponseEntity<Void> deleteCompOffRequest(
+            @PathVariable Long compId,
+            Authentication authentication) {
+
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        CompOffRequest request = compOffRequestRepository.findById(compId)
+                .orElseThrow(() -> new ResourceNotFoundException("CompOffRequest", compId));
+
+        // Check authorization
+        if (!isAuthorizedToRevoke(request, currentUser)) {
+            throw new SecurityException("You are not authorized to revoke this comp-off grant");
         }
 
-        compOffRequestRepository.delete(request);
+        // Validate status - can only revoke APPROVED grants
+        if (request.getStatus() != CompOffRequest.RequestStatus.APPROVED) {
+            throw new ConflictException("Only APPROVED comp-off grants can be revoked");
+        }
+
+        // Check if there are any pending or approved leave requests linked to this grant
+        List<LeaveRequest> linkedRequests = leaveRequestRepository.findByCompOffRequestId(compId);
+        boolean hasActiveClaims = linkedRequests.stream()
+                .anyMatch(lr -> lr.getStatus() == LeaveRequest.RequestStatus.PENDING_L1 ||
+                        lr.getStatus() == LeaveRequest.RequestStatus.PENDING_L2 ||
+                        lr.getStatus() == LeaveRequest.RequestStatus.APPROVED);
+
+        if (hasActiveClaims) {
+            throw new ConflictException("Cannot revoke comp-off grant with active leave requests linked to it");
+        }
+
+        // Set status to REJECTED (revoked)
+        request.setStatus(CompOffRequest.RequestStatus.REJECTED);
+        compOffRequestRepository.save(request);
+
+        // Create notification for the employee
+        createNotification(
+                request.getUser(),
+                "COMP_OFF_REVOKED",
+                "Comp-Off Grant Revoked",
+                "Your comp-off grant for " + request.getWorkedOn() + " has been revoked by " + currentUser.getName() + ".",
+                "COMP_OFF_REVOKED",
+                request.getId()
+        );
+
         return ResponseEntity.noContent().build();
     }
 
     private CompOffRequestDto toCompOffRequestDto(CompOffRequest request) {
         CompOffRequestDto dto = new CompOffRequestDto();
         dto.setId(request.getId().intValue());
-        
+
         // Generate display ID (e.g., CO-2024-014)
-        String displayId = "CO-" + request.getCreatedAt().getYear() + "-" + 
-                          String.format("%03d", request.getId().intValue());
+        String displayId = "CO-" + request.getCreatedAt().getYear() + "-" +
+                String.format("%03d", request.getId().intValue());
         dto.setDisplayId(displayId);
-        
+
         dto.setUserId(request.getUser().getId().intValue());
         dto.setEmployeeName(request.getUser().getName());
         // Resolve user avatar URL
         dto.setUserAvatarUrl(attachmentService.resolveAvatarUrl(request.getUser().getId()));
-        
+
         dto.setWorkedOn(request.getWorkedOn());
         dto.setReason(request.getReason());
         dto.setDaysCredited(request.getDaysCredited().doubleValue());
         dto.setExpiryDate(request.getExpiryDate());
         dto.setStatus(request.getStatus().name());
-        
+
+        // Calculate computed fields
+        Double daysClaimed = leaveRequestRepository.sumDaysClaimedByCompOffRequestId(request.getId());
+        Double daysPending = leaveRequestRepository.sumDaysPendingByCompOffRequestId(request.getId());
+        dto.setDaysClaimed(daysClaimed != null ? daysClaimed : 0.0);
+        dto.setDaysPending(daysPending != null ? daysPending : 0.0);
+        dto.setDaysRemaining(request.getDaysCredited().doubleValue() -
+                (dto.getDaysClaimed() + dto.getDaysPending()));
+
         if (request.getApprover() != null) {
             dto.setApproverId(request.getApprover().getId().intValue());
             dto.setApproverName(request.getApprover().getName());
             // Resolve approver avatar URL
             dto.setApproverAvatarUrl(attachmentService.resolveAvatarUrl(request.getApprover().getId()));
         }
-        
+
         if (request.getIssuer() != null) {
             dto.setIssuerId(request.getIssuer().getId().intValue());
             dto.setIssuerName(request.getIssuer().getName());
             // Resolve issuer avatar URL
             dto.setIssuerAvatarUrl(attachmentService.resolveAvatarUrl(request.getIssuer().getId()));
         }
-        
+
         dto.setCreatedAt(request.getCreatedAt());
         return dto;
+    }
+
+    private CompOffRequestDetailDto toCompOffRequestDetailDto(CompOffRequest request) {
+        CompOffRequestDetailDto dto = new CompOffRequestDetailDto();
+
+        // Copy all fields from the base DTO
+        dto.setId(request.getId().intValue());
+
+        String displayId = "CO-" + request.getCreatedAt().getYear() + "-" +
+                String.format("%03d", request.getId().intValue());
+        dto.setDisplayId(displayId);
+
+        dto.setUserId(request.getUser().getId().intValue());
+        dto.setEmployeeName(request.getUser().getName());
+        dto.setUserAvatarUrl(attachmentService.resolveAvatarUrl(request.getUser().getId()));
+
+        dto.setWorkedOn(request.getWorkedOn());
+        dto.setReason(request.getReason());
+        dto.setDaysCredited(request.getDaysCredited().doubleValue());
+        dto.setExpiryDate(request.getExpiryDate());
+        dto.setStatus(request.getStatus().name());
+
+        // Calculate computed fields
+        Double daysClaimed = leaveRequestRepository.sumDaysClaimedByCompOffRequestId(request.getId());
+        Double daysPending = leaveRequestRepository.sumDaysPendingByCompOffRequestId(request.getId());
+        dto.setDaysClaimed(daysClaimed != null ? daysClaimed : 0.0);
+        dto.setDaysPending(daysPending != null ? daysPending : 0.0);
+        dto.setDaysRemaining(request.getDaysCredited().doubleValue() -
+                (dto.getDaysClaimed() + dto.getDaysPending()));
+
+        if (request.getApprover() != null) {
+            dto.setApproverId(request.getApprover().getId().intValue());
+            dto.setApproverName(request.getApprover().getName());
+            dto.setApproverAvatarUrl(attachmentService.resolveAvatarUrl(request.getApprover().getId()));
+        }
+
+        if (request.getIssuer() != null) {
+            dto.setIssuerId(request.getIssuer().getId().intValue());
+            dto.setIssuerName(request.getIssuer().getName());
+            dto.setIssuerAvatarUrl(attachmentService.resolveAvatarUrl(request.getIssuer().getId()));
+        }
+
+        dto.setCreatedAt(request.getCreatedAt());
+
+        return dto;
+    }
+
+    private LeaveRequestDto toLeaveRequestDto(LeaveRequest leaveRequest) {
+        LeaveRequestDto dto = new LeaveRequestDto();
+        dto.setId(leaveRequest.getId());
+        dto.setUserId(leaveRequest.getUser().getId());
+        dto.setUserName(leaveRequest.getUser().getName());
+        dto.setCategoryId(leaveRequest.getCategory().getId().intValue());
+        dto.setCategoryName(leaveRequest.getCategory().getCategoryName());
+        dto.setStartDate(leaveRequest.getStartDate());
+        dto.setEndDate(leaveRequest.getEndDate());
+        dto.setSessionType(leaveRequest.getSessionType().name());
+        dto.setTotalDays(leaveRequest.getTotalDays());
+        dto.setLopDays(leaveRequest.getLopDays());
+        dto.setReason(leaveRequest.getReason());
+        dto.setStatus(leaveRequest.getStatus().name());
+
+        if (leaveRequest.getCurrentApprover() != null) {
+            dto.setCurrentApproverId(leaveRequest.getCurrentApprover().getId());
+            dto.setCurrentApproverName(leaveRequest.getCurrentApprover().getName());
+            dto.setCurrentApproverAvatarUrl(attachmentService.resolveAvatarUrl(leaveRequest.getCurrentApprover().getId()));
+        }
+
+        dto.setUserAvatarUrl(attachmentService.resolveAvatarUrl(leaveRequest.getUser().getId()));
+
+        if (leaveRequest.getCompOffRequest() != null) {
+            dto.setCompOffRequestId(leaveRequest.getCompOffRequest().getId().intValue());
+        }
+
+        dto.setAppliedAt(leaveRequest.getAppliedAt());
+
+        return dto;
+    }
+
+    private boolean isAuthorizedToGrant(User issuer, User targetEmployee) {
+        // HR_ADMIN can grant to anyone
+        if (issuer.getRole().getRoleCode().equals("HR_ADMIN")) {
+            return true;
+        }
+
+        // MANAGER can grant to their direct reports
+        if (issuer.getRole().getRoleCode().equals("MANAGER")) {
+            // Check if issuer is the target's reporting manager
+            if (targetEmployee.getReportsTo() != null &&
+                    targetEmployee.getReportsTo().getId().equals(issuer.getId())) {
+                return true;
+            }
+
+            // Check for active delegation
+            List<ApprovalDelegation> activeDelegations = delegationRepository
+                    .findActiveDelegationsForDelegatorOnDate(issuer.getId(), LocalDate.now());
+
+            for (ApprovalDelegation delegation : activeDelegations) {
+                if (delegation.getDelegate().getId().equals(targetEmployee.getReportsTo() != null ?
+                        targetEmployee.getReportsTo().getId() : null)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private boolean isAuthorizedToRevoke(CompOffRequest request, User revoker) {
+        // HR_ADMIN can revoke any grant
+        if (revoker.getRole().getRoleCode().equals("HR_ADMIN")) {
+            return true;
+        }
+
+        // MANAGER can revoke grants they issued or to their direct reports
+        if (revoker.getRole().getRoleCode().equals("MANAGER")) {
+            // If they issued it
+            if (request.getIssuer() != null && request.getIssuer().getId().equals(revoker.getId())) {
+                return true;
+            }
+
+            // If they are the reporting manager
+            if (request.getUser().getReportsTo() != null &&
+                    request.getUser().getReportsTo().getId().equals(revoker.getId())) {
+                return true;
+            }
+
+            // Check for active delegation
+            List<ApprovalDelegation> activeDelegations = delegationRepository
+                    .findActiveDelegationsForDelegatorOnDate(revoker.getId(), LocalDate.now());
+
+            for (ApprovalDelegation delegation : activeDelegations) {
+                if (delegation.getDelegate().getId().equals(request.getUser().getReportsTo() != null ?
+                        request.getUser().getReportsTo().getId() : null)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private boolean canAccessCompOffRequest(CompOffRequest request, User currentUser) {
+        // HR_ADMIN can see all
+        if (currentUser.getRole().getRoleCode().equals("HR_ADMIN")) {
+            return true;
+        }
+
+        // Employee can see their own
+        if (request.getUser().getId().equals(currentUser.getId())) {
+            return true;
+        }
+
+        // Manager can see their direct reports' grants
+        if (currentUser.getRole().getRoleCode().equals("MANAGER")) {
+            if (request.getUser().getReportsTo() != null &&
+                    request.getUser().getReportsTo().getId().equals(currentUser.getId())) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void creditLeaveLedger(User user, BigDecimal daysCredited, LocalDate expiryDate, Long compOffRequestId) {
         // Find the comp-off leave category
         // Try to find by category code first, then by name
-        Optional<com.lms.Leave_Management_System_Backend.model.LeaveCategory> compOffCategory = 
-            leaveCategoryRepository.findByCategoryCode("COMP_OFF");
-        
+        Optional<com.lms.Leave_Management_System_Backend.model.LeaveCategory> compOffCategory =
+                leaveCategoryRepository.findByCategoryCode("COMP_OFF");
+
         if (compOffCategory.isEmpty()) {
             // Try to find by name if category code doesn't exist
             compOffCategory = leaveCategoryRepository.findAll().stream()
-                .filter(c -> "Compensatory Off".equalsIgnoreCase(c.getCategoryName()) || 
-                           "Comp Off".equalsIgnoreCase(c.getCategoryName()) ||
-                           "Comp-Off".equalsIgnoreCase(c.getCategoryName()))
-                .findFirst();
+                    .filter(c -> "Compensatory Off".equalsIgnoreCase(c.getCategoryName()) ||
+                            "Comp Off".equalsIgnoreCase(c.getCategoryName()) ||
+                            "Comp-Off".equalsIgnoreCase(c.getCategoryName()))
+                    .findFirst();
         }
-        
+
         if (compOffCategory.isEmpty()) {
             throw new ResourceNotFoundException("LeaveCategory", "Comp-Off category not found");
         }
-        
+
         com.lms.Leave_Management_System_Backend.model.LeaveCategory category = compOffCategory.get();
-        
+
         // Determine fiscal year based on expiry date
         int fiscalYear = expiryDate.getYear();
-        
+
         // Find or create ledger entry
         Optional<LeaveLedger> existingLedger = leaveLedgerRepository
-            .findByUserIdAndCategoryIdAndFiscalYear(user.getId(), category.getId(), fiscalYear);
-        
+                .findByUserIdAndCategoryIdAndFiscalYear(user.getId(), category.getId(), fiscalYear);
+
         LeaveLedger ledger;
         if (existingLedger.isPresent()) {
             ledger = existingLedger.get();
@@ -365,7 +544,7 @@ public class CompOffController {
             ledger.setCarriedForward(BigDecimal.ZERO);
             ledger.setClosingBalance(BigDecimal.ZERO);
         }
-        
+
         // Update the ledger with the comp-off credit
         BigDecimal newAccrued = ledger.getAccrued().add(daysCredited);
         ledger.setAccrued(newAccrued);
@@ -375,7 +554,7 @@ public class CompOffController {
         ledger.setReferenceType("COMP_OFF_REQUEST");
         ledger.setReferenceId(compOffRequestId);
         ledger.setDescription("Comp-off credit granted - Valid until " + expiryDate);
-        
+
         leaveLedgerRepository.save(ledger);
     }
 
@@ -405,8 +584,8 @@ public class CompOffController {
 
         // For managers, verify they are the current approver
         if (currentUser.getRole().getRoleCode().equals("MANAGER")) {
-            if (compOffRequest.getApprover() == null || 
-                !compOffRequest.getApprover().getId().equals(currentUser.getId())) {
+            if (compOffRequest.getApprover() == null ||
+                    !compOffRequest.getApprover().getId().equals(currentUser.getId())) {
                 throw new SecurityException("You can only view attachments for requests where you are the approver");
             }
         }
@@ -498,8 +677,8 @@ public class CompOffController {
 
         // For managers, verify they are the current approver
         if (currentUser.getRole().getRoleCode().equals("MANAGER")) {
-            if (compOffRequest.getApprover() == null || 
-                !compOffRequest.getApprover().getId().equals(currentUser.getId())) {
+            if (compOffRequest.getApprover() == null ||
+                    !compOffRequest.getApprover().getId().equals(currentUser.getId())) {
                 throw new SecurityException("You can only view attachments for requests where you are the approver");
             }
         }
@@ -541,7 +720,6 @@ public class CompOffController {
 
         } catch (Exception e) {
             // Log error but don't fail the main operation
-            System.err.println("Failed to create notification: " + e.getMessage());
             e.printStackTrace();
         }
     }

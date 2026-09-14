@@ -21,6 +21,7 @@ public class LeaveRequestDto {
     private String currentApproverName;
     private String currentApproverAvatarUrl;
     private String userAvatarUrl;
+    private Integer compOffRequestId;
     private LocalDateTime appliedAt;
 
     public LeaveRequestDto() {
@@ -152,6 +153,14 @@ public class LeaveRequestDto {
 
     public void setUserAvatarUrl(String userAvatarUrl) {
         this.userAvatarUrl = userAvatarUrl;
+    }
+
+    public Integer getCompOffRequestId() {
+        return compOffRequestId;
+    }
+
+    public void setCompOffRequestId(Integer compOffRequestId) {
+        this.compOffRequestId = compOffRequestId;
     }
 
     public LocalDateTime getAppliedAt() {

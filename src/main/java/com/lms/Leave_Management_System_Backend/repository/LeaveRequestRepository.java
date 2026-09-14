@@ -67,4 +67,17 @@ public interface LeaveRequestRepository extends JpaRepository<LeaveRequest, Long
             @Param("userIds") List<Long> userIds,
             @Param("startDate") LocalDate startDate,
             @Param("endDate") LocalDate endDate);
+
+    @EntityGraph(attributePaths = {"user", "category"})
+    List<LeaveRequest> findByCompOffRequestId(Long compOffRequestId);
+
+    @Query("SELECT COALESCE(SUM(lr.totalDays), 0) FROM LeaveRequest lr " +
+            "WHERE lr.compOffRequest.id = :compOffRequestId " +
+            "AND lr.status = 'APPROVED'")
+    Double sumDaysClaimedByCompOffRequestId(@Param("compOffRequestId") Long compOffRequestId);
+
+    @Query("SELECT COALESCE(SUM(lr.totalDays), 0) FROM LeaveRequest lr " +
+            "WHERE lr.compOffRequest.id = :compOffRequestId " +
+            "AND lr.status IN ('PENDING_L1', 'PENDING_L2')")
+    Double sumDaysPendingByCompOffRequestId(@Param("compOffRequestId") Long compOffRequestId);
 }

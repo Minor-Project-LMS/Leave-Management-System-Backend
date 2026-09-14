@@ -8,6 +8,8 @@ import com.lms.Leave_Management_System_Backend.model.*;
 import com.lms.Leave_Management_System_Backend.model.LeaveApproval;
 import com.lms.Leave_Management_System_Backend.repository.*;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
+import com.lms.Leave_Management_System_Backend.service.AttachmentService;
+import com.lms.Leave_Management_System_Backend.service.LeaveLedgerProvisioningService;
 import org.springframework.transaction.annotation.Transactional;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
@@ -40,6 +42,7 @@ public class LeaveRequestsController {
     private final LeavePolicyRepository leavePolicyRepository;
     private final com.lms.Leave_Management_System_Backend.service.AttachmentService attachmentService;
     private final com.lms.Leave_Management_System_Backend.service.LeaveLedgerProvisioningService leaveLedgerProvisioningService;
+    private final com.lms.Leave_Management_System_Backend.repository.CompOffRequestRepository compOffRequestRepository;
 
     // In-memory comment storage
     private static final Map<Long, List<CommentDto>> commentStorage = new ConcurrentHashMap<>();
@@ -53,8 +56,9 @@ public class LeaveRequestsController {
             LeaveLedgerRepository leaveLedgerRepository,
             NotificationQueueRepository notificationQueueRepository,
             LeavePolicyRepository leavePolicyRepository,
-            com.lms.Leave_Management_System_Backend.service.AttachmentService attachmentService,
-            com.lms.Leave_Management_System_Backend.service.LeaveLedgerProvisioningService leaveLedgerProvisioningService) {
+            AttachmentService attachmentService,
+            LeaveLedgerProvisioningService leaveLedgerProvisioningService,
+            com.lms.Leave_Management_System_Backend.repository.CompOffRequestRepository compOffRequestRepository) {
         this.leaveRequestRepository = leaveRequestRepository;
         this.userRepository = userRepository;
         this.leaveCategoryRepository = leaveCategoryRepository;
@@ -65,6 +69,7 @@ public class LeaveRequestsController {
         this.leavePolicyRepository = leavePolicyRepository;
         this.attachmentService = attachmentService;
         this.leaveLedgerProvisioningService = leaveLedgerProvisioningService;
+        this.compOffRequestRepository = compOffRequestRepository;
     }
 
     @PostMapping
@@ -86,6 +91,15 @@ public class LeaveRequestsController {
 
         // Validate max continuous days limit according to policy
         validateConsecutiveDays(user, category, calculatedDays);
+
+        // Check for comp-off date conflicts
+        validateCompOffDateConflict(user, request.getStartDate(), request.getEndDate());
+
+        // Validate comp-off grant exists and is APPROVED if this is a comp-off claim
+        // Note: Balance validation happens during approval, not at submission
+        if (request.getCompOffRequestId() != null) {
+            validateCompOffGrantExists(user, request.getCompOffRequestId(), request.getCategoryId(), request.getEndDate());
+        }
 
         LeaveRequest leaveRequest = new LeaveRequest();
         leaveRequest.setUser(user);
@@ -540,6 +554,9 @@ public class LeaveRequestsController {
                         .orElseThrow(() -> new ResourceNotFoundException("HR Admin", "role"));
                 leaveRequest.setCurrentApprover(hrAdmin);
             } else {
+                // Validate comp-off balance before final approval
+                validateCompOffBalance(leaveRequest);
+
                 // Final approval - update leave ledger
                 int currentYear = java.time.Year.now().getValue();
                 // The ledger row for this category/year might not exist yet
@@ -777,6 +794,80 @@ public class LeaveRequestsController {
                 }
             }
         }
+    }
+
+    /**
+     * Helper method to validate comp-off date conflicts
+     * Note: This validation is disabled in the new comp-off workflow.
+     * Employees can now apply for regular leave even if they have comp-off grants.
+     * They should use the comp-off category to claim against their grants.
+     */
+    private void validateCompOffDateConflict(User user, LocalDate startDate, LocalDate endDate) {
+        // No-op in the new workflow - employees can have both regular leave and comp-off grants
+    }
+
+    private void validateCompOffGrantExists(User user, Integer compOffRequestId, Integer categoryId, LocalDate endDate) {
+        // Find the comp-off grant
+        CompOffRequest compOffRequest = compOffRequestRepository.findById(compOffRequestId.longValue())
+                .orElseThrow(() -> new ResourceNotFoundException("CompOffRequest", compOffRequestId));
+
+        // Verify the grant belongs to the authenticated employee
+        if (!compOffRequest.getUser().getId().equals(user.getId())) {
+            throw new SecurityException("You can only claim against your own comp-off grants");
+        }
+
+        // Verify the grant is in APPROVED status
+        if (compOffRequest.getStatus() != CompOffRequest.RequestStatus.APPROVED) {
+            throw new ConflictException("Cannot claim against a comp-off grant that is not APPROVED");
+        }
+
+        // Verify the leave category is the Comp Off category
+        if (!isCompOffCategory(categoryId)) {
+            throw new ConflictException("compOffRequestId can only be used with the Comp Off leave category");
+        }
+
+        // Verify endDate is on or before the grant's expiry date
+        if (endDate.isAfter(compOffRequest.getExpiryDate())) {
+            throw new ConflictException("Leave request end date cannot be after the comp-off grant's expiry date");
+        }
+    }
+
+    private void validateCompOffBalance(LeaveRequest leaveRequest) {
+        if (leaveRequest.getCompOffRequest() == null) {
+            return; // Not a comp-off claim, skip validation
+        }
+
+        CompOffRequest compOffRequest = leaveRequest.getCompOffRequest();
+
+        // Calculate days remaining (excluding this current request)
+        Double daysClaimed = leaveRequestRepository.sumDaysClaimedByCompOffRequestId(compOffRequest.getId());
+        Double daysPending = leaveRequestRepository.sumDaysPendingByCompOffRequestId(compOffRequest.getId());
+        
+        // Subtract this request's days from pending if it's already counted
+        double currentRequestDays = leaveRequest.getTotalDays().doubleValue();
+        if (leaveRequest.getStatus() == LeaveRequest.RequestStatus.PENDING_L1 || 
+            leaveRequest.getStatus() == LeaveRequest.RequestStatus.PENDING_L2) {
+            daysPending = (daysPending != null ? daysPending : 0.0) - currentRequestDays;
+        }
+        
+        double totalClaimed = (daysClaimed != null ? daysClaimed : 0.0) + (daysPending > 0 ? daysPending : 0.0);
+        double daysRemaining = compOffRequest.getDaysCredited().doubleValue() - totalClaimed;
+
+        // Check if requested days exceed remaining balance
+        if (currentRequestDays > daysRemaining) {
+            throw new ConflictException("INSUFFICIENT_COMP_OFF_BALANCE");
+        }
+    }
+
+    private boolean isCompOffCategory(Integer categoryId) {
+        // Check if the category is the Comp Off category by name or code
+        LeaveCategory category = leaveCategoryRepository.findById(categoryId)
+                .orElseThrow(() -> new ResourceNotFoundException("LeaveCategory", categoryId));
+        
+        return "COMP_OFF".equalsIgnoreCase(category.getCategoryCode()) ||
+               "Compensatory Off".equalsIgnoreCase(category.getCategoryName()) ||
+               "Comp Off".equalsIgnoreCase(category.getCategoryName()) ||
+               "Comp-Off".equalsIgnoreCase(category.getCategoryName());
     }
 
     private void createNotification(User user, String type, String title, String message, String entityType, Long entityId) {

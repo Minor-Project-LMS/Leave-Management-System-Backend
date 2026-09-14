@@ -35,6 +35,8 @@ public class LeaveRequestInput {
     
     private String status;
     
+    private Integer compOffRequestId;
+    
     private List<Integer> attachmentIds;
 
     // Getters and Setters
@@ -116,6 +118,14 @@ public class LeaveRequestInput {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public Integer getCompOffRequestId() {
+        return compOffRequestId;
+    }
+
+    public void setCompOffRequestId(Integer compOffRequestId) {
+        this.compOffRequestId = compOffRequestId;
     }
 
     public List<Integer> getAttachmentIds() {

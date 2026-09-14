@@ -21,6 +21,11 @@ public class CompOffRequestDto {
     private String issuerAvatarUrl;
     private String userAvatarUrl;
     private LocalDateTime createdAt;
+    
+    // Computed fields for balance tracking
+    private Double daysClaimed;
+    private Double daysPending;
+    private Double daysRemaining;
 
     // Constructors
     public CompOffRequestDto() {}
@@ -160,5 +165,29 @@ public class CompOffRequestDto {
 
     public void setCreatedAt(LocalDateTime createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public Double getDaysClaimed() {
+        return daysClaimed;
+    }
+
+    public void setDaysClaimed(Double daysClaimed) {
+        this.daysClaimed = daysClaimed;
+    }
+
+    public Double getDaysPending() {
+        return daysPending;
+    }
+
+    public void setDaysPending(Double daysPending) {
+        this.daysPending = daysPending;
+    }
+
+    public Double getDaysRemaining() {
+        return daysRemaining;
+    }
+
+    public void setDaysRemaining(Double daysRemaining) {
+        this.daysRemaining = daysRemaining;
     }
 }

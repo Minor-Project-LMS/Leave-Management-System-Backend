@@ -49,7 +49,7 @@ public class CompOffRequest {
     private User issuer;
 
     public enum RequestStatus {
-        PENDING, APPROVED, GRANTED, REJECTED, EXPIRED
+        PENDING, APPROVED, REJECTED, EXPIRED
     }
 
     public CompOffRequest() {
