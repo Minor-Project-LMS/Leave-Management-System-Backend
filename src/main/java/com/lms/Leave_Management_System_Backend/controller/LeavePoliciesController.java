@@ -85,14 +85,19 @@ public class LeavePoliciesController {
         }
 
         LeavePolicy policy = new LeavePolicy();
+        policy.setPolicyName(request.getPolicyName());
+        policy.setPolicyCode(request.getPolicyCode());
         policy.setCategory(category);
         policy.setDepartment(department);
         policy.setAnnualQuota(request.getAnnualQuota() != null ? new java.math.BigDecimal(request.getAnnualQuota()) : java.math.BigDecimal.ZERO);
         policy.setMaxCarryForward(request.getMaxCarryForward() != null ? new java.math.BigDecimal(request.getMaxCarryForward()) : java.math.BigDecimal.ZERO);
         policy.setMinNoticeDays(request.getMinNoticeDays() != null ? request.getMinNoticeDays() : 0);
         policy.setMaxConsecutiveDays(request.getMaxConsecutiveDays() != null ? request.getMaxConsecutiveDays() : 0);
+        if (request.getAccrualFrequency() != null) {
+            policy.setAccrualFrequency(request.getAccrualFrequency());
+        }
         policy.setEffectiveFrom(request.getEffectiveFrom());
-        policy.setStatus("DRAFT"); // New policies start as DRAFT
+        policy.setStatus(request.getStatus() != null ? request.getStatus() : "DRAFT");
 
         LeavePolicy saved = leavePolicyRepository.save(policy);
         LeavePolicyDto dto = toLeavePolicyDto(saved);
@@ -121,9 +126,14 @@ public class LeavePoliciesController {
         LeavePolicy policy = leavePolicyRepository.findById(policyId)
                 .orElseThrow(() -> new ResourceNotFoundException("LeavePolicy", policyId));
 
-        // Only DRAFT policies can be fully edited
-        if (!"DRAFT".equals(policy.getStatus())) {
-            throw new IllegalStateException("Only DRAFT policies can be fully edited");
+        if (request.getPolicyName() != null) {
+            policy.setPolicyName(request.getPolicyName());
+        }
+        if (request.getPolicyCode() != null) {
+            policy.setPolicyCode(request.getPolicyCode());
+        }
+        if (request.getAccrualFrequency() != null) {
+            policy.setAccrualFrequency(request.getAccrualFrequency());
         }
 
         if (request.getCategoryId() != null) {
