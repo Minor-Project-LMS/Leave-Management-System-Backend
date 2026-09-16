@@ -15,6 +15,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -38,6 +39,7 @@ public class LeavePoliciesController {
 
     @GetMapping
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional(readOnly = true)
     public ResponseEntity<PaginatedResponse<LeavePolicyDto>> listLeavePolicies(
             @RequestParam(required = false) Integer categoryId,
             @RequestParam(required = false) Integer departmentId,
@@ -107,6 +109,7 @@ public class LeavePoliciesController {
 
     @GetMapping("/{policyId}")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional(readOnly = true)
     public ResponseEntity<LeavePolicyDto> getLeavePolicy(
             @PathVariable Integer policyId) {
 
@@ -167,8 +170,15 @@ public class LeavePoliciesController {
             policy.setStatus(request.getStatus());
         }
 
-        LeavePolicy saved = leavePolicyRepository.save(policy);
-        return ResponseEntity.ok(toLeavePolicyDto(saved));
+        // Build the response from `policy` (already holds the real,
+        // fully-loaded category/department we just set), not from the
+        // return value of save(). Same issue as the earlier Employees
+        // fix: save() returns a merged copy from its own short-lived
+        // transaction, and that copy's associations can come back as
+        // uninitialized lazy proxies with no session left to resolve
+        // them once open-in-view is disabled.
+        leavePolicyRepository.save(policy);
+        return ResponseEntity.ok(toLeavePolicyDto(policy));
     }
 
     @GetMapping("/{policyId}/history")
