@@ -5,6 +5,7 @@ public class ReportExportJob {
     private String jobId;
     private String status;
     private String downloadUrl;
+    private String filename;
 
     // Getters and Setters
     public String getJobId() {
@@ -29,5 +30,13 @@ public class ReportExportJob {
 
     public void setDownloadUrl(String downloadUrl) {
         this.downloadUrl = downloadUrl;
+    }
+
+    public String getFilename() {
+        return filename;
+    }
+
+    public void setFilename(String filename) {
+        this.filename = filename;
     }
 }
