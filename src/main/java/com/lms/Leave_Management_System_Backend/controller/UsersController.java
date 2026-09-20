@@ -2,8 +2,12 @@ package com.lms.Leave_Management_System_Backend.controller;
 
 import com.lms.Leave_Management_System_Backend.dto.*;
 import com.lms.Leave_Management_System_Backend.exception.ResourceNotFoundException;
-import com.lms.Leave_Management_System_Backend.exception.SecurityException;
+import com.lms.Leave_Management_System_Backend.model.NotificationQueue;
 import com.lms.Leave_Management_System_Backend.model.User;
+import com.lms.Leave_Management_System_Backend.model.UserNotificationPreference;
+import com.lms.Leave_Management_System_Backend.exception.SecurityException;
+import com.lms.Leave_Management_System_Backend.repository.NotificationQueueRepository;
+import com.lms.Leave_Management_System_Backend.repository.UserNotificationPreferenceRepository;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
 import com.lms.Leave_Management_System_Backend.service.AttachmentService;
@@ -16,6 +20,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
+
 
 @RestController
 @RequestMapping("/api/v1/users")
@@ -25,12 +31,22 @@ public class UsersController {
     private final AuthService authService;
     private final PasswordEncoder passwordEncoder;
     private final AttachmentService attachmentService;
+    private final NotificationQueueRepository notificationQueueRepository;
+    private final UserNotificationPreferenceRepository userNotificationPreferenceRepository;
 
-    public UsersController(UserRepository userRepository, AuthService authService, PasswordEncoder passwordEncoder, AttachmentService attachmentService) {
+    public UsersController(
+            UserRepository userRepository,
+            AuthService authService,
+            PasswordEncoder passwordEncoder,
+            AttachmentService attachmentService,
+            NotificationQueueRepository notificationQueueRepository,
+            UserNotificationPreferenceRepository userNotificationPreferenceRepository) {
         this.userRepository = userRepository;
         this.authService = authService;
         this.passwordEncoder = passwordEncoder;
         this.attachmentService = attachmentService;
+        this.notificationQueueRepository = notificationQueueRepository;
+        this.userNotificationPreferenceRepository = userNotificationPreferenceRepository;
     }
 
     @GetMapping("/me")
@@ -39,7 +55,7 @@ public class UsersController {
         String email = authentication.getName();
         User user = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
-        
+
         UserDto userDto = authService.getUserByEmail(email);
         // Avatar URL is already resolved by authService.getUserByEmail using the centralized resolver
         return ResponseEntity.ok(new ApiResponse<UserDto>(true, userDto));
@@ -50,17 +66,20 @@ public class UsersController {
     public ResponseEntity<ApiResponse<UserDto>> updateMyProfile(
             @Valid @RequestBody UpdateProfileRequest request,
             Authentication authentication) {
-        
+
         String email = authentication.getName();
         User user = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
 
         // Update self-editable fields per EMP-09 (Personal Information and Emergency Contact cards)
-        if (request.getName() != null) {
+        boolean changed = false;
+        if (request.getName() != null && !request.getName().equals(user.getName())) {
             user.setName(request.getName());
+            changed = true;
         }
-        if (request.getPhoneNumber() != null) {
+        if (request.getPhoneNumber() != null && !request.getPhoneNumber().equals(user.getPhone())) {
             user.setPhone(request.getPhoneNumber());
+            changed = true;
         }
         if (request.getPersonalEmail() != null) {
             // In real implementation, would update personal email field
@@ -70,7 +89,18 @@ public class UsersController {
         }
 
         userRepository.save(user);
-        
+
+        if (changed) {
+            createNotification(
+                    user,
+                    "PROFILE_UPDATED",
+                    "Profile Updated",
+                    "Your profile information was updated successfully.",
+                    "SYSTEM",
+                    user.getId()
+            );
+        }
+
         UserDto userDto = authService.getUserByEmail(email);
         // Avatar URL is already resolved by authService.getUserByEmail using the centralized resolver
         return ResponseEntity.ok(new ApiResponse<UserDto>(true, userDto));
@@ -81,7 +111,7 @@ public class UsersController {
     public ResponseEntity<?> changePassword(
             @Valid @RequestBody ChangePasswordRequest request,
             Authentication authentication) {
-        
+
         String email = authentication.getName();
         User user = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
@@ -98,6 +128,15 @@ public class UsersController {
 
         user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
         userRepository.save(user);
+
+        createNotification(
+                user,
+                "PASSWORD_CHANGED",
+                "Password Changed",
+                "Your password was changed successfully. If this wasn't you, contact HR immediately.",
+                "SYSTEM",
+                user.getId()
+        );
 
         return ResponseEntity.ok(new ApiResponse<UserDto>(true, null));
     }
@@ -127,7 +166,7 @@ public class UsersController {
     public ResponseEntity<ApiResponse<AvatarResponse>> getUserAvatar(
             @PathVariable Long userId,
             Authentication authentication) {
-        
+
         String email = authentication.getName();
         User currentUser = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
@@ -191,6 +230,62 @@ public class UsersController {
         // Use the resolveAvatarUrl function to get the properly resolved avatar URL
         String resolvedAvatarUrl = attachmentService.resolveAvatarUrl(user.getId());
 
+        createNotification(
+                user,
+                "PROFILE_AVATAR_UPDATED",
+                "Profile Picture Updated",
+                "Your profile picture was updated successfully.",
+                "SYSTEM",
+                user.getId()
+        );
+
         return ResponseEntity.ok(new ApiResponse<AvatarResponse>(true, new AvatarResponse(resolvedAvatarUrl)));
+    }
+
+    /**
+     * Queues an IN_APP + EMAIL notification, mirroring the pattern used by
+     * LeaveRequestsController / CompOffController. Honors the user's
+     * "System Notifications" preference (defaults to on if no preference
+     * row exists yet).
+     */
+    private void createNotification(User user, String type, String title, String message, String entityType, Long entityId) {
+        try {
+            boolean systemNotificationsEnabled = userNotificationPreferenceRepository.findByUserId(user.getId())
+                    .map(UserNotificationPreference::getSystemNotifications)
+                    .map(enabled -> !Boolean.FALSE.equals(enabled))
+                    .orElse(true);
+
+            if (!systemNotificationsEnabled) {
+                return;
+            }
+
+            NotificationQueue inAppNotification = new NotificationQueue();
+            inAppNotification.setUser(user);
+            inAppNotification.setChannel(NotificationQueue.Channel.IN_APP);
+            inAppNotification.setTemplateCode(type);
+            inAppNotification.setPayload("{\"title\":\"" + title + "\",\"message\":\"" + message + "\"}");
+            inAppNotification.setRelatedEntityType(entityType);
+            inAppNotification.setRelatedEntityId(entityId);
+            inAppNotification.setStatus(NotificationQueue.NotificationStatus.QUEUED);
+            inAppNotification.setCreatedAt(LocalDateTime.now());
+            inAppNotification.setScheduledAt(LocalDateTime.now());
+            inAppNotification.setIsRead(false);
+            notificationQueueRepository.save(inAppNotification);
+
+            NotificationQueue emailNotification = new NotificationQueue();
+            emailNotification.setUser(user);
+            emailNotification.setChannel(NotificationQueue.Channel.EMAIL);
+            emailNotification.setTemplateCode(type);
+            emailNotification.setPayload("{\"title\":\"" + title + "\",\"message\":\"" + message + "\"}");
+            emailNotification.setRelatedEntityType(entityType);
+            emailNotification.setRelatedEntityId(entityId);
+            emailNotification.setStatus(NotificationQueue.NotificationStatus.QUEUED);
+            emailNotification.setCreatedAt(LocalDateTime.now());
+            emailNotification.setScheduledAt(LocalDateTime.now());
+            notificationQueueRepository.save(emailNotification);
+        } catch (Exception e) {
+            // Log error but don't fail the main operation
+            e.printStackTrace();
+        }
     }
 }

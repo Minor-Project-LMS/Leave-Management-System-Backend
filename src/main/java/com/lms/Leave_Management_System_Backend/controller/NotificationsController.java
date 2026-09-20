@@ -3,10 +3,13 @@ package com.lms.Leave_Management_System_Backend.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lms.Leave_Management_System_Backend.dto.NotificationDto;
+import com.lms.Leave_Management_System_Backend.dto.NotificationPreferences;
 import com.lms.Leave_Management_System_Backend.dto.PageResponse;
 import com.lms.Leave_Management_System_Backend.model.NotificationQueue;
 import com.lms.Leave_Management_System_Backend.model.User;
+import com.lms.Leave_Management_System_Backend.model.UserNotificationPreference;
 import com.lms.Leave_Management_System_Backend.repository.NotificationQueueRepository;
+import com.lms.Leave_Management_System_Backend.repository.UserNotificationPreferenceRepository;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
 import jakarta.transaction.Transactional;
@@ -32,6 +35,9 @@ public class NotificationsController {
 
     @Autowired
     private UserRepository userRepository;
+
+    @Autowired
+    private UserNotificationPreferenceRepository userNotificationPreferenceRepository;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -136,6 +142,76 @@ public class NotificationsController {
         result.put("unreadCount", 0);
 
         return ResponseEntity.ok(result);
+    }
+
+    @GetMapping("/preferences")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    public ResponseEntity<NotificationPreferences> getPreferences(Authentication authentication) {
+
+        User currentUser = userRepository.findByEmailIgnoreCase(authentication.getName())
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        UserNotificationPreference preference = userNotificationPreferenceRepository
+                .findByUserId(currentUser.getId())
+                .orElseGet(() -> createDefaultPreference(currentUser));
+
+        return ResponseEntity.ok(convertToPreferencesDto(preference));
+    }
+
+    @PatchMapping("/preferences")
+    @Transactional
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    public ResponseEntity<NotificationPreferences> updatePreferences(
+            @RequestBody NotificationPreferences preferences,
+            Authentication authentication) {
+
+        User currentUser = userRepository.findByEmailIgnoreCase(authentication.getName())
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        UserNotificationPreference preference = userNotificationPreferenceRepository
+                .findByUserId(currentUser.getId())
+                .orElseGet(() -> createDefaultPreference(currentUser));
+
+        if (preferences.getLeaveRequestUpdates() != null) {
+            preference.setLeaveRequestUpdates(preferences.getLeaveRequestUpdates());
+        }
+        if (preferences.getApprovalNotifications() != null) {
+            preference.setApprovalNotifications(preferences.getApprovalNotifications());
+        }
+        if (preferences.getCompOffUpdates() != null) {
+            preference.setCompOffUpdates(preferences.getCompOffUpdates());
+        }
+        if (preferences.getPolicyUpdates() != null) {
+            preference.setPolicyUpdates(preferences.getPolicyUpdates());
+        }
+        if (preferences.getSystemNotifications() != null) {
+            preference.setSystemNotifications(preferences.getSystemNotifications());
+        }
+        if (preferences.getHolidayReminders() != null) {
+            preference.setHolidayReminders(preferences.getHolidayReminders());
+        }
+
+        preference.setUpdatedAt(LocalDateTime.now());
+        UserNotificationPreference saved = userNotificationPreferenceRepository.saveAndFlush(preference);
+
+        return ResponseEntity.ok(convertToPreferencesDto(saved));
+    }
+
+    private UserNotificationPreference createDefaultPreference(User user) {
+        UserNotificationPreference preference = new UserNotificationPreference();
+        preference.setUser(user);
+        return userNotificationPreferenceRepository.saveAndFlush(preference);
+    }
+
+    private NotificationPreferences convertToPreferencesDto(UserNotificationPreference preference) {
+        NotificationPreferences dto = new NotificationPreferences();
+        dto.setLeaveRequestUpdates(preference.getLeaveRequestUpdates());
+        dto.setApprovalNotifications(preference.getApprovalNotifications());
+        dto.setCompOffUpdates(preference.getCompOffUpdates());
+        dto.setPolicyUpdates(preference.getPolicyUpdates());
+        dto.setSystemNotifications(preference.getSystemNotifications());
+        dto.setHolidayReminders(preference.getHolidayReminders());
+        return dto;
     }
 
     private NotificationDto convertToDto(NotificationQueue notification) {
