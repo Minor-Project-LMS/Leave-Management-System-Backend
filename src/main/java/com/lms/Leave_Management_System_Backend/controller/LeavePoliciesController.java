@@ -296,11 +296,29 @@ public class LeavePoliciesController {
         return changed;
     }
 
+    // Snapshots are round-tripped through JSON (Map -> string -> stored in
+    // the audit trail -> string -> Map again) between when they're taken
+    // and when they're diffed. That round trip loses the original Java
+    // type — a BigDecimal like 6.00 comes back out as a plain Double or
+    // Integer, not a BigDecimal — so checking `instanceof BigDecimal` here
+    // never actually matches, and numeric fields (Annual Quota, Max Carry
+    // Forward) were being compared as raw strings like "6.0" vs "6",
+    // which look different even though the value never changed. This
+    // instead recognizes anything that parses as a number, regardless of
+    // its post-round-trip Java type, and compares those numerically.
     private Object normalizeForCompare(Object value) {
-        if (value instanceof java.math.BigDecimal) {
-            return ((java.math.BigDecimal) value).stripTrailingZeros().toPlainString();
+        if (value == null) return null;
+
+        if (value instanceof Number) {
+            return new java.math.BigDecimal(value.toString()).stripTrailingZeros().toPlainString();
         }
-        return value == null ? null : value.toString();
+
+        String s = value.toString();
+        try {
+            return new java.math.BigDecimal(s).stripTrailingZeros().toPlainString();
+        } catch (NumberFormatException notNumeric) {
+            return s;
+        }
     }
 
     private void recordPolicyHistory(LeavePolicy policy, AuditTrail.AuditAction action,
