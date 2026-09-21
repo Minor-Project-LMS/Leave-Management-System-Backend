@@ -37,6 +37,9 @@ public class AuthController {
     @Value("${cookie.same-site:Lax}")
     private String cookieSameSite;
 
+    @Value("${cookie.secure:true}")
+    private boolean cookieSecure;
+
     public AuthController(
             AuthService authService,
             JwtUtil jwtUtil,
@@ -90,7 +93,7 @@ public class AuthController {
         // Set HttpOnly, Secure, SameSite cookie scoped to /api/v1/auth
         Cookie cookie = new Cookie("refreshToken", refreshToken);
         cookie.setHttpOnly(true);
-        cookie.setSecure(false); // Set to true in production with HTTPS
+        cookie.setSecure(cookieSecure);
         cookie.setPath("/api/v1/auth"); // Scoped to auth endpoints per OpenAPI spec
         cookie.setMaxAge((int) (7 * 24 * 60 * 60));
         cookie.setAttribute("SameSite", cookieSameSite);
@@ -213,7 +216,7 @@ public class AuthController {
             // Clear the cookie
             Cookie clearCookie = new Cookie("refreshToken", "");
             clearCookie.setHttpOnly(true);
-            clearCookie.setSecure(false);
+            clearCookie.setSecure(cookieSecure);
             clearCookie.setPath("/api/v1/auth");
             clearCookie.setMaxAge(0);
             clearCookie.setAttribute("SameSite", cookieSameSite);
@@ -245,7 +248,7 @@ public class AuthController {
             // Clear the cookie to force re-authentication
             Cookie clearCookie = new Cookie("refreshToken", "");
             clearCookie.setHttpOnly(true);
-            clearCookie.setSecure(false);
+            clearCookie.setSecure(cookieSecure);
             clearCookie.setPath("/api/v1/auth");
             clearCookie.setMaxAge(0);
             clearCookie.setAttribute("SameSite", cookieSameSite);
@@ -262,7 +265,7 @@ public class AuthController {
         // Set new refresh token cookie with updated security flags
         Cookie newCookie = new Cookie("refreshToken", newRefreshToken);
         newCookie.setHttpOnly(true);
-        newCookie.setSecure(false); // Set to true in production with HTTPS
+        newCookie.setSecure(cookieSecure); // Set to true in production with HTTPS
         newCookie.setPath("/api/v1/auth");
         newCookie.setMaxAge((int) (7 * 24 * 60 * 60));
         newCookie.setAttribute("SameSite", cookieSameSite);
@@ -355,7 +358,7 @@ public class AuthController {
         // This now always runs, regardless of what happened above.
         Cookie cookie = new Cookie("refreshToken", "");
         cookie.setHttpOnly(true);
-        cookie.setSecure(false);
+        cookie.setSecure(cookieSecure);
         cookie.setPath("/api/v1/auth");
         cookie.setMaxAge(0);
         cookie.setAttribute("SameSite", cookieSameSite);
