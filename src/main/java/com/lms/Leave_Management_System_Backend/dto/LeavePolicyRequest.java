@@ -4,6 +4,7 @@ import java.time.LocalDate;
 
 public class LeavePolicyRequest {
     private String policyName;
+    private String policyCode;
     private Integer categoryId;
     private Integer departmentId;
     private Double annualQuota;
@@ -24,6 +25,14 @@ public class LeavePolicyRequest {
 
     public void setPolicyName(String policyName) {
         this.policyName = policyName;
+    }
+
+    public String getPolicyCode() {
+        return policyCode;
+    }
+
+    public void setPolicyCode(String policyCode) {
+        this.policyCode = policyCode;
     }
 
     public Integer getCategoryId() {

@@ -14,10 +14,14 @@ public class LeaveRequestDto {
     private LocalDate endDate;
     private String sessionType;
     private BigDecimal totalDays;
+    private BigDecimal lopDays;
     private String reason;
     private String status;
     private Long currentApproverId;
     private String currentApproverName;
+    private String currentApproverAvatarUrl;
+    private String userAvatarUrl;
+    private Integer compOffRequestId;
     private LocalDateTime appliedAt;
 
     public LeaveRequestDto() {
@@ -95,6 +99,14 @@ public class LeaveRequestDto {
         this.totalDays = totalDays;
     }
 
+    public BigDecimal getLopDays() {
+        return lopDays;
+    }
+
+    public void setLopDays(BigDecimal lopDays) {
+        this.lopDays = lopDays;
+    }
+
     public String getReason() {
         return reason;
     }
@@ -125,6 +137,30 @@ public class LeaveRequestDto {
 
     public void setCurrentApproverName(String currentApproverName) {
         this.currentApproverName = currentApproverName;
+    }
+
+    public String getCurrentApproverAvatarUrl() {
+        return currentApproverAvatarUrl;
+    }
+
+    public void setCurrentApproverAvatarUrl(String currentApproverAvatarUrl) {
+        this.currentApproverAvatarUrl = currentApproverAvatarUrl;
+    }
+
+    public String getUserAvatarUrl() {
+        return userAvatarUrl;
+    }
+
+    public void setUserAvatarUrl(String userAvatarUrl) {
+        this.userAvatarUrl = userAvatarUrl;
+    }
+
+    public Integer getCompOffRequestId() {
+        return compOffRequestId;
+    }
+
+    public void setCompOffRequestId(Integer compOffRequestId) {
+        this.compOffRequestId = compOffRequestId;
     }
 
     public LocalDateTime getAppliedAt() {

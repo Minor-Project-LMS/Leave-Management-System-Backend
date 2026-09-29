@@ -82,7 +82,13 @@ public class HolidaysController {
         
         if (month != null && year != null) {
             LocalDate startOfMonth = LocalDate.of(year, month, 1);
+            // Ensure start date isn't before today if checking current month
+            if (startOfMonth.isBefore(today)) {
+                startOfMonth = today;
+            }
+
             LocalDate endOfMonth = startOfMonth.withDayOfMonth(startOfMonth.lengthOfMonth());
+
             return ResponseEntity.ok(holidayRepository.findByHolidayDateBetween(startOfMonth, endOfMonth).stream()
                     .map(this::toHolidayDto)
                     .collect(Collectors.toList()));

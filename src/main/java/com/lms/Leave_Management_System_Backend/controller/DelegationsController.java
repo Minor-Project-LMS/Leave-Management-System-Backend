@@ -7,6 +7,7 @@ import com.lms.Leave_Management_System_Backend.model.User;
 import com.lms.Leave_Management_System_Backend.repository.ApprovalDelegationRepository;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
+import com.lms.Leave_Management_System_Backend.service.AttachmentService;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -25,10 +26,46 @@ public class DelegationsController {
 
     private final ApprovalDelegationRepository delegationRepository;
     private final UserRepository userRepository;
+    private final AttachmentService attachmentService;
 
-    public DelegationsController(ApprovalDelegationRepository delegationRepository, UserRepository userRepository) {
+    public DelegationsController(ApprovalDelegationRepository delegationRepository, UserRepository userRepository, AttachmentService attachmentService) {
         this.delegationRepository = delegationRepository;
         this.userRepository = userRepository;
+        this.attachmentService = attachmentService;
+    }
+
+    @GetMapping("/eligible-delegates")
+    @RequireRole({"MANAGER", "HR_ADMIN"})
+    public ResponseEntity<List<UserDto>> listEligibleDelegates(Authentication authentication) {
+
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        // Delegation targets are HR admins (mirrors the same HR routing
+        // used when a leave request escalates to PENDING_L2 — see
+        // LeaveRequestsController#findFirstByRole_RoleCode) — never the
+        // calling manager's own direct reports, since a report doesn't
+        // hold approval authority to delegate in the first place.
+        List<User> candidates = userRepository.findActiveUsersByRoleCodes(List.of("HR_ADMIN"));
+
+        List<UserDto> dtos = candidates.stream()
+                .filter(u -> !u.getId().equals(currentUser.getId()))
+                .map(this::toEligibleDelegateDto)
+                .collect(Collectors.toList());
+
+        return ResponseEntity.ok(dtos);
+    }
+
+    private UserDto toEligibleDelegateDto(User user) {
+        UserDto dto = new UserDto();
+        dto.setId(user.getId());
+        dto.setName(user.getName());
+        dto.setDesignation(user.getDesignation());
+        dto.setRole(user.getRole().getRoleCode());
+        // Use the centralized avatar resolver
+        dto.setAvatarUrl(attachmentService.resolveAvatarUrl(user.getId()));
+        return dto;
     }
 
     @GetMapping
@@ -79,7 +116,7 @@ public class DelegationsController {
     public ResponseEntity<DelegationDto> createDelegation(
             @RequestBody DelegationInputDto request,
             Authentication authentication) {
-        
+
         String email = authentication.getName();
         User delegator = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
@@ -108,7 +145,7 @@ public class DelegationsController {
     @RequireRole({"MANAGER", "HR_ADMIN"})
     public ResponseEntity<DelegationDto> getDelegation(
             @PathVariable Long delegationId) {
-        
+
         ApprovalDelegation delegation = delegationRepository.findById(delegationId.intValue())
                 .orElseThrow(() -> new ResourceNotFoundException("Delegation", delegationId));
 
@@ -121,7 +158,7 @@ public class DelegationsController {
             @PathVariable Long delegationId,
             @RequestBody DelegationInputDto request,
             Authentication authentication) {
-        
+
         ApprovalDelegation delegation = delegationRepository.findById(delegationId.intValue())
                 .orElseThrow(() -> new ResourceNotFoundException("Delegation", delegationId));
 
@@ -141,7 +178,7 @@ public class DelegationsController {
     public ResponseEntity<DelegationDto> revokeDelegation(
             @PathVariable Long delegationId,
             Authentication authentication) {
-        
+
         ApprovalDelegation delegation = delegationRepository.findById(delegationId.intValue())
                 .orElseThrow(() -> new ResourceNotFoundException("Delegation", delegationId));
 
@@ -172,27 +209,29 @@ public class DelegationsController {
     private DelegationDto toDelegationDto(ApprovalDelegation delegation) {
         DelegationDto dto = new DelegationDto();
         dto.setDelegationId(delegation.getId());
-        
+
         UserDto delegatorDto = new UserDto();
         delegatorDto.setId(delegation.getDelegator().getId());
         delegatorDto.setName(delegation.getDelegator().getName());
+        delegatorDto.setAvatarUrl(attachmentService.resolveAvatarUrl(delegation.getDelegator().getId()));
         dto.setDelegator(delegatorDto);
-        
+
         UserDto delegateDto = new UserDto();
         delegateDto.setId(delegation.getDelegate().getId());
         delegateDto.setName(delegation.getDelegate().getName());
+        delegateDto.setAvatarUrl(attachmentService.resolveAvatarUrl(delegation.getDelegate().getId()));
         dto.setDelegate(delegateDto);
-        
+
         dto.setStartDate(delegation.getStartDate());
         dto.setEndDate(delegation.getEndDate());
         dto.setIsActive(delegation.isActive());
         dto.setCreatedAt(delegation.getCreatedAt());
-        
+
         // Set scope
         DelegationDto.DelegationScope scope = new DelegationDto.DelegationScope();
         scope.setAllTypes(true); // Default to all types for now
         dto.setScope(scope);
-        
+
         return dto;
     }
 }

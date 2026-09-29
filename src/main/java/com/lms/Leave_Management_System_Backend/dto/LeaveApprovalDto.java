@@ -7,6 +7,7 @@ public class LeaveApprovalDto {
     private Integer requestId;
     private Integer approverId;
     private String approverName;
+    private String approverAvatarUrl;
     private Integer actingAsDelegateFor;
     private Integer level;
     private String decision;
@@ -60,6 +61,14 @@ public class LeaveApprovalDto {
 
     public void setApproverName(String approverName) {
         this.approverName = approverName;
+    }
+
+    public String getApproverAvatarUrl() {
+        return approverAvatarUrl;
+    }
+
+    public void setApproverAvatarUrl(String approverAvatarUrl) {
+        this.approverAvatarUrl = approverAvatarUrl;
     }
 
     public Integer getActingAsDelegateFor() {

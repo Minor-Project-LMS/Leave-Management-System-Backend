@@ -1,19 +1,27 @@
 package com.lms.Leave_Management_System_Backend.controller;
 
 import com.lms.Leave_Management_System_Backend.dto.*;
-import com.lms.Leave_Management_System_Backend.exception.BusinessRuleException;
 import com.lms.Leave_Management_System_Backend.exception.ResourceNotFoundException;
+import com.lms.Leave_Management_System_Backend.model.NotificationQueue;
 import com.lms.Leave_Management_System_Backend.model.User;
+import com.lms.Leave_Management_System_Backend.model.UserNotificationPreference;
+import com.lms.Leave_Management_System_Backend.exception.SecurityException;
+import com.lms.Leave_Management_System_Backend.repository.NotificationQueueRepository;
+import com.lms.Leave_Management_System_Backend.repository.UserNotificationPreferenceRepository;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
+import com.lms.Leave_Management_System_Backend.service.AttachmentService;
 import com.lms.Leave_Management_System_Backend.service.AuthService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.multipart.MultipartFile;
+
+import java.time.LocalDateTime;
+
 
 @RestController
 @RequestMapping("/api/v1/users")
@@ -22,11 +30,23 @@ public class UsersController {
     private final UserRepository userRepository;
     private final AuthService authService;
     private final PasswordEncoder passwordEncoder;
+    private final AttachmentService attachmentService;
+    private final NotificationQueueRepository notificationQueueRepository;
+    private final UserNotificationPreferenceRepository userNotificationPreferenceRepository;
 
-    public UsersController(UserRepository userRepository, AuthService authService, PasswordEncoder passwordEncoder) {
+    public UsersController(
+            UserRepository userRepository,
+            AuthService authService,
+            PasswordEncoder passwordEncoder,
+            AttachmentService attachmentService,
+            NotificationQueueRepository notificationQueueRepository,
+            UserNotificationPreferenceRepository userNotificationPreferenceRepository) {
         this.userRepository = userRepository;
         this.authService = authService;
         this.passwordEncoder = passwordEncoder;
+        this.attachmentService = attachmentService;
+        this.notificationQueueRepository = notificationQueueRepository;
+        this.userNotificationPreferenceRepository = userNotificationPreferenceRepository;
     }
 
     @GetMapping("/me")
@@ -35,9 +55,10 @@ public class UsersController {
         String email = authentication.getName();
         User user = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
-        
+
         UserDto userDto = authService.getUserByEmail(email);
-        return ResponseEntity.ok(new ApiResponse<>(true, userDto));
+        // Avatar URL is already resolved by authService.getUserByEmail using the centralized resolver
+        return ResponseEntity.ok(new ApiResponse<UserDto>(true, userDto));
     }
 
     @PatchMapping("/me")
@@ -45,17 +66,20 @@ public class UsersController {
     public ResponseEntity<ApiResponse<UserDto>> updateMyProfile(
             @Valid @RequestBody UpdateProfileRequest request,
             Authentication authentication) {
-        
+
         String email = authentication.getName();
         User user = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
 
         // Update self-editable fields per EMP-09 (Personal Information and Emergency Contact cards)
-        if (request.getName() != null) {
+        boolean changed = false;
+        if (request.getName() != null && !request.getName().equals(user.getName())) {
             user.setName(request.getName());
+            changed = true;
         }
-        if (request.getPhoneNumber() != null) {
+        if (request.getPhoneNumber() != null && !request.getPhoneNumber().equals(user.getPhone())) {
             user.setPhone(request.getPhoneNumber());
+            changed = true;
         }
         if (request.getPersonalEmail() != null) {
             // In real implementation, would update personal email field
@@ -65,9 +89,21 @@ public class UsersController {
         }
 
         userRepository.save(user);
-        
+
+        if (changed) {
+            createNotification(
+                    user,
+                    "PROFILE_UPDATED",
+                    "Profile Updated",
+                    "Your profile information was updated successfully.",
+                    "SYSTEM",
+                    user.getId()
+            );
+        }
+
         UserDto userDto = authService.getUserByEmail(email);
-        return ResponseEntity.ok(new ApiResponse<>(true, userDto));
+        // Avatar URL is already resolved by authService.getUserByEmail using the centralized resolver
+        return ResponseEntity.ok(new ApiResponse<UserDto>(true, userDto));
     }
 
     @PostMapping("/me/password")
@@ -75,7 +111,7 @@ public class UsersController {
     public ResponseEntity<?> changePassword(
             @Valid @RequestBody ChangePasswordRequest request,
             Authentication authentication) {
-        
+
         String email = authentication.getName();
         User user = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
@@ -93,49 +129,163 @@ public class UsersController {
         user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
         userRepository.save(user);
 
-        return ResponseEntity.ok(new ApiResponse<>(true, null));
+        createNotification(
+                user,
+                "PASSWORD_CHANGED",
+                "Password Changed",
+                "Your password was changed successfully. If this wasn't you, contact HR immediately.",
+                "SYSTEM",
+                user.getId()
+        );
+
+        return ResponseEntity.ok(new ApiResponse<UserDto>(true, null));
     }
 
-    @PostMapping("/me/avatar")
+    // Legacy multipart avatar upload removed - all avatar uploads now use pre-signed URL flow
+    // through /me/avatar/init-upload and /me/avatar/{attachmentId}/confirm endpoints
+
+    // ============================================================
+    // AVATAR UPLOAD ENDPOINTS (Direct-to-Storage)
+    // ============================================================
+
+    @GetMapping("/me/avatar")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
-    public ResponseEntity<?> uploadAvatar(
-            @RequestParam("file") MultipartFile file,
+    @Transactional(readOnly = true)
+    public ResponseEntity<ApiResponse<AvatarResponse>> getMyAvatar(Authentication authentication) {
+        String email = authentication.getName();
+        User user = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        String resolvedAvatarUrl = attachmentService.resolveAvatarUrl(user.getId());
+        return ResponseEntity.ok(new ApiResponse<AvatarResponse>(true, new AvatarResponse(resolvedAvatarUrl)));
+    }
+
+    @GetMapping("/{userId}/avatar")
+    @RequireRole({"MANAGER", "HR_ADMIN"})
+    @Transactional(readOnly = true)
+    public ResponseEntity<ApiResponse<AvatarResponse>> getUserAvatar(
+            @PathVariable Long userId,
             Authentication authentication) {
-        
-        // Check file size (10 MB limit as per OpenAPI spec)
-        long maxSize = 10 * 1024 * 1024; // 10 MB in bytes
-        if (file.getSize() > maxSize) {
-            return ResponseEntity
-                    .status(HttpStatus.BAD_REQUEST)
-                    .body(new ApiErrorResponse(
-                            "FILE_TOO_LARGE",
-                            "File size exceeds the 10 MB limit",
-                            "/users/me/avatar"
-                    ));
+
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        User targetUser = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User", userId));
+
+        // Authorization check: managers can only view avatars of their direct reports
+        if (currentUser.getRole().getRoleCode().equals("MANAGER")) {
+            if (targetUser.getReportsTo() == null || !targetUser.getReportsTo().getId().equals(currentUser.getId())) {
+                throw new SecurityException("You can only view avatars of your direct reports");
+            }
         }
 
-        // Validate file type (images only)
-        String contentType = file.getContentType();
-        if (contentType == null || !contentType.startsWith("image/")) {
-            return ResponseEntity
-                    .status(HttpStatus.BAD_REQUEST)
-                    .body(new ApiErrorResponse(
-                            "INVALID_FILE_TYPE",
-                            "Only image files are allowed",
-                            "/users/me/avatar"
-                    ));
-        }
+        String resolvedAvatarUrl = attachmentService.resolveAvatarUrl(targetUser.getId());
+        return ResponseEntity.ok(new ApiResponse<AvatarResponse>(true, new AvatarResponse(resolvedAvatarUrl)));
+    }
+
+    @PostMapping("/me/avatar/init-upload")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
+    public ResponseEntity<ApiResponse<AttachmentInitUploadResponse>> initAvatarUpload(
+            @Valid @RequestBody AttachmentInitUploadRequest request,
+            Authentication authentication) {
 
         String email = authentication.getName();
         User user = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
 
-        // In a real implementation, you would upload to a cloud storage service
-        // For now, we'll simulate by setting a placeholder URL
-        String avatarUrl = "/uploads/avatars/" + user.getId() + "_" + file.getOriginalFilename();
-        user.setAvatarUrl(avatarUrl);
+        AttachmentInitUploadResponse response = attachmentService.initializeUpload(
+                com.lms.Leave_Management_System_Backend.model.Attachment.EntityType.USER_AVATAR,
+                user.getId(),
+                request,
+                user.getId()
+        );
+
+        return ResponseEntity.status(201).body(new ApiResponse<AttachmentInitUploadResponse>(true, response));
+    }
+
+    @PostMapping("/me/avatar/{attachmentId}/confirm")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
+    public ResponseEntity<ApiResponse<AvatarResponse>> confirmAvatarUpload(
+            @PathVariable Long attachmentId,
+            @RequestBody(required = false) AttachmentConfirmRequest confirmRequest,
+            Authentication authentication) {
+
+        String email = authentication.getName();
+        User user = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        AttachmentDto attachment = attachmentService.confirmUpload(attachmentId, confirmRequest);
+
+        // Get a fresh download URL for the confirmed attachment
+        AttachmentDto attachmentWithUrl = attachmentService.getAttachment(attachmentId);
+
+        // Update user's avatar URL as fallback (primary source is now attachments table)
+        user.setAvatarUrl(attachmentWithUrl.getDownloadUrl());
         userRepository.save(user);
 
-        return ResponseEntity.ok(new AvatarResponse(avatarUrl));
+        // Use the resolveAvatarUrl function to get the properly resolved avatar URL
+        String resolvedAvatarUrl = attachmentService.resolveAvatarUrl(user.getId());
+
+        createNotification(
+                user,
+                "PROFILE_AVATAR_UPDATED",
+                "Profile Picture Updated",
+                "Your profile picture was updated successfully.",
+                "SYSTEM",
+                user.getId()
+        );
+
+        return ResponseEntity.ok(new ApiResponse<AvatarResponse>(true, new AvatarResponse(resolvedAvatarUrl)));
+    }
+
+    /**
+     * Queues an IN_APP + EMAIL notification, mirroring the pattern used by
+     * LeaveRequestsController / CompOffController. Honors the user's
+     * "System Notifications" preference (defaults to on if no preference
+     * row exists yet).
+     */
+    private void createNotification(User user, String type, String title, String message, String entityType, Long entityId) {
+        try {
+            boolean systemNotificationsEnabled = userNotificationPreferenceRepository.findByUserId(user.getId())
+                    .map(UserNotificationPreference::getSystemNotifications)
+                    .map(enabled -> !Boolean.FALSE.equals(enabled))
+                    .orElse(true);
+
+            if (!systemNotificationsEnabled) {
+                return;
+            }
+
+            NotificationQueue inAppNotification = new NotificationQueue();
+            inAppNotification.setUser(user);
+            inAppNotification.setChannel(NotificationQueue.Channel.IN_APP);
+            inAppNotification.setTemplateCode(type);
+            inAppNotification.setPayload("{\"title\":\"" + title + "\",\"message\":\"" + message + "\"}");
+            inAppNotification.setRelatedEntityType(entityType);
+            inAppNotification.setRelatedEntityId(entityId);
+            inAppNotification.setStatus(NotificationQueue.NotificationStatus.QUEUED);
+            inAppNotification.setCreatedAt(LocalDateTime.now());
+            inAppNotification.setScheduledAt(LocalDateTime.now());
+            inAppNotification.setIsRead(false);
+            notificationQueueRepository.save(inAppNotification);
+
+            NotificationQueue emailNotification = new NotificationQueue();
+            emailNotification.setUser(user);
+            emailNotification.setChannel(NotificationQueue.Channel.EMAIL);
+            emailNotification.setTemplateCode(type);
+            emailNotification.setPayload("{\"title\":\"" + title + "\",\"message\":\"" + message + "\"}");
+            emailNotification.setRelatedEntityType(entityType);
+            emailNotification.setRelatedEntityId(entityId);
+            emailNotification.setStatus(NotificationQueue.NotificationStatus.QUEUED);
+            emailNotification.setCreatedAt(LocalDateTime.now());
+            emailNotification.setScheduledAt(LocalDateTime.now());
+            notificationQueueRepository.save(emailNotification);
+        } catch (Exception e) {
+            // Log error but don't fail the main operation
+            e.printStackTrace();
+        }
     }
 }

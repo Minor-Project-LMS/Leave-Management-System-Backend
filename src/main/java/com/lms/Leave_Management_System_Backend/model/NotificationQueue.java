@@ -1,6 +1,9 @@
 package com.lms.Leave_Management_System_Backend.model;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 import java.time.LocalDateTime;
 
 @Entity
@@ -23,6 +26,7 @@ public class NotificationQueue {
     @Column(name = "template_code", nullable = false)
     private String templateCode;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "payload", nullable = false, columnDefinition = "JSONB")
     private String payload;
 

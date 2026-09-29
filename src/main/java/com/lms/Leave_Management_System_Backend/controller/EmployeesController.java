@@ -3,10 +3,18 @@ package com.lms.Leave_Management_System_Backend.controller;
 import com.lms.Leave_Management_System_Backend.dto.*;
 import com.lms.Leave_Management_System_Backend.exception.BusinessRuleException;
 import com.lms.Leave_Management_System_Backend.exception.ResourceNotFoundException;
+import com.lms.Leave_Management_System_Backend.model.Department;
+import com.lms.Leave_Management_System_Backend.model.LeaveLedger;
+import com.lms.Leave_Management_System_Backend.model.Role;
 import com.lms.Leave_Management_System_Backend.model.User;
+import com.lms.Leave_Management_System_Backend.repository.DepartmentRepository;
+import com.lms.Leave_Management_System_Backend.repository.RoleRepository;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
+import com.lms.Leave_Management_System_Backend.service.AttachmentService;
+import com.lms.Leave_Management_System_Backend.service.LeaveLedgerProvisioningService;
 import jakarta.validation.Valid;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -14,21 +22,41 @@ import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.time.LocalDate;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/employees")
 public class EmployeesController {
 
     private final UserRepository userRepository;
+    private final AttachmentService attachmentService;
+    private final DepartmentRepository departmentRepository;
+    private final RoleRepository roleRepository;
+    private final PasswordEncoder passwordEncoder;
+    private final LeaveLedgerProvisioningService leaveLedgerProvisioningService;
 
-    public EmployeesController(UserRepository userRepository) {
+    public EmployeesController(UserRepository userRepository,
+                               AttachmentService attachmentService,
+                               DepartmentRepository departmentRepository,
+                               RoleRepository roleRepository,
+                               PasswordEncoder passwordEncoder,
+                               LeaveLedgerProvisioningService leaveLedgerProvisioningService) {
         this.userRepository = userRepository;
+        this.attachmentService = attachmentService;
+        this.departmentRepository = departmentRepository;
+        this.roleRepository = roleRepository;
+        this.passwordEncoder = passwordEncoder;
+        this.leaveLedgerProvisioningService = leaveLedgerProvisioningService;
     }
 
     @GetMapping
@@ -42,25 +70,9 @@ public class EmployeesController {
             @RequestParam(defaultValue = "20") int limit,
             Authentication authentication) {
 
-        Pageable pageable = PageRequest.of(page - 1, limit, Sort.by("name").ascending());
-        Page<User> employees;
+        Pageable pageable = PageRequest.of(page - 1, limit, Sort.by("fullName").ascending());
 
-        // Apply filters based on parameters
-        if (q != null && !q.isBlank()) {
-            // Search across name only (simplified) - would need custom query
-            employees = userRepository.findAll(pageable);
-        } else if (departmentId != null) {
-            // Simplified - would need department repository
-            employees = userRepository.findAll(pageable);
-        } else if (designation != null) {
-            // Simplified - would need custom query
-            employees = userRepository.findAll(pageable);
-        } else if (status != null) {
-            // Simplified - would need custom query with Pageable
-            employees = userRepository.findAll(pageable);
-        } else {
-            employees = userRepository.findAll(pageable);
-        }
+        Page<User> employees = userRepository.findEmployeeDirectory(departmentId, designation, status, q, pageable);
 
         List<UserDto> dtos = employees.getContent().stream()
                 .map(this::toUserDto)
@@ -79,17 +91,15 @@ public class EmployeesController {
     @PostMapping
     @RequireRole({"HR_ADMIN"})
     public ResponseEntity<UserDto> createEmployee(
-            @Valid @RequestBody EmployeeInput employeeInput,
+            @Validated(EmployeeInput.OnCreate.class) @RequestBody EmployeeInput employeeInput,
             Authentication authentication) {
 
-        // Check if email already exists
         if (userRepository.findByEmailIgnoreCase(employeeInput.getEmail()).isPresent()) {
             throw new BusinessRuleException("Email already in use");
         }
 
-        // Check if employee code already exists
-        if (employeeInput.getEmployeeCode() != null && 
-            userRepository.findByEmployeeCode(employeeInput.getEmployeeCode()).isPresent()) {
+        if (employeeInput.getEmployeeCode() != null &&
+                userRepository.findByEmployeeCode(employeeInput.getEmployeeCode()).isPresent()) {
             throw new BusinessRuleException("Employee code already in use");
         }
 
@@ -97,37 +107,41 @@ public class EmployeesController {
         user.setName(employeeInput.getFullName());
         user.setEmail(employeeInput.getEmail());
         user.setPhone(employeeInput.getPhone());
-        // In real implementation, fetch role from repository
-        // user.setRole(roleRepository.findByRoleCode(employeeInput.getRole().name()).orElseThrow(...));
+
+        // 1. Fetch and set the mandatory Role entity
+        String roleCode = employeeInput.getRole() != null ? employeeInput.getRole() : "EMPLOYEE";
+        Role role = roleRepository.findByRoleCode(roleCode)
+                .orElseThrow(() -> new ResourceNotFoundException("Role", roleCode));
+        user.setRole(role);
+
+        // 2. Set a default password hash (satisfies nullable = false)
+        user.setPasswordHash(passwordEncoder.encode("Welcome@123"));
+
         user.setDesignation(employeeInput.getDesignation());
         user.setDateOfJoining(employeeInput.getDateOfJoining());
-        user.setEmploymentStatus(employeeInput.getEmploymentStatus() != null ? 
+        user.setEmploymentStatus(employeeInput.getEmploymentStatus() != null ?
                 User.EmploymentStatus.valueOf(employeeInput.getEmploymentStatus()) : User.EmploymentStatus.ACTIVE);
         user.setWorkLocation(employeeInput.getWorkLocation());
         user.setEmploymentType(employeeInput.getEmploymentType());
-        
-        // Set department and manager if provided
+
+        // 3. Set Manager (Reports To)
         if (employeeInput.getReportsTo() != null) {
             User manager = userRepository.findById(employeeInput.getReportsTo().longValue())
                     .orElseThrow(() -> new ResourceNotFoundException("User", employeeInput.getReportsTo()));
             user.setReportsTo(manager);
         }
+
+        // 4. Set Department
         if (employeeInput.getDepartmentId() != null) {
-            // In real implementation, fetch department from repository
-            // user.setDepartment(departmentRepository.findById(employeeInput.getDepartmentId()).orElseThrow(...));
-        }
-        
-        if (employeeInput.getReportsTo() != null) {
-            User manager = userRepository.findById(employeeInput.getReportsTo().longValue())
-                    .orElseThrow(() -> new ResourceNotFoundException("User", employeeInput.getReportsTo().longValue()));
-            user.setReportsTo(manager);
+            Department department = departmentRepository.findById((int) employeeInput.getDepartmentId().longValue())
+                    .orElseThrow(() -> new ResourceNotFoundException("Department", employeeInput.getDepartmentId()));
+            user.setDepartment(department);
         }
 
         if (employeeInput.getEmployeeCode() != null) {
             user.setEmployeeCode(employeeInput.getEmployeeCode());
         } else {
-            // Generate employee code
-            user.setEmployeeCode("EMP-" + System.currentTimeMillis());
+            user.setEmployeeCode(generateNextEmployeeCode(roleCode));
         }
 
         User saved = userRepository.save(user);
@@ -150,7 +164,7 @@ public class EmployeesController {
     @RequireRole({"HR_ADMIN"})
     public ResponseEntity<UserDto> updateEmployee(
             @PathVariable Long employeeId,
-            @Valid @RequestBody EmployeeInput employeeInput,
+            @Validated(EmployeeInput.OnUpdate.class) @RequestBody EmployeeInput employeeInput,
             Authentication authentication) {
 
         User user = userRepository.findWithReportsToById(employeeId.longValue())
@@ -174,12 +188,30 @@ public class EmployeesController {
             user.setPhone(employeeInput.getPhone());
         }
         if (employeeInput.getRole() != null) {
-            // In real implementation, fetch role from repository
-            // user.setRole(roleRepository.findByRoleCode(employeeInput.getRole().name()).orElseThrow(...));
+            Role role = roleRepository.findByRoleCode(employeeInput.getRole())
+                    .orElseThrow(() -> new ResourceNotFoundException("Role", employeeInput.getRole()));
+
+            // If the role change moves the employee into a different
+            // code series (EMP/MGR/HR), regenerate their employee code to
+            // match — e.g. an EMPLOYEE promoted to MANAGER should read
+            // MGR### afterward, not keep their old EMP### code. Only
+            // regenerate when the prefix actually changes, so repeated
+            // saves with the same role don't burn through the sequence.
+            String oldRoleCode = user.getRole() != null ? user.getRole().getRoleCode() : null;
+            if (!employeeInput.getRole().equals(oldRoleCode)) {
+                String oldPrefix = employeeCodePrefixForRole(oldRoleCode);
+                String newPrefix = employeeCodePrefixForRole(employeeInput.getRole());
+                if (!newPrefix.equals(oldPrefix)) {
+                    user.setEmployeeCode(generateNextEmployeeCode(employeeInput.getRole()));
+                }
+            }
+
+            user.setRole(role);
         }
         if (employeeInput.getDepartmentId() != null) {
-            // In real implementation, fetch department from repository
-            // user.setDepartment(departmentRepository.findById(employeeInput.getDepartmentId()).orElseThrow(...));
+            Department department = departmentRepository.findById((int) employeeInput.getDepartmentId().longValue())
+                    .orElseThrow(() -> new ResourceNotFoundException("Department", employeeInput.getDepartmentId()));
+            user.setDepartment(department);
         }
         if (employeeInput.getDesignation() != null) {
             user.setDesignation(employeeInput.getDesignation());
@@ -199,8 +231,16 @@ public class EmployeesController {
             user.setEmploymentType(employeeInput.getEmploymentType());
         }
 
-        User saved = userRepository.save(user);
-        return ResponseEntity.ok(toUserDto(saved));
+        // Note: we build the response from `user`, not from the return value
+        // of save(). save() returns a managed copy from its own short-lived
+        // transaction (open-in-view is disabled), and that copy's role /
+        // department associations come back as uninitialized lazy proxies
+        // with no session left to resolve them — `user` already holds the
+        // real, fully-loaded entities (either eagerly fetched above via
+        // @EntityGraph, or freshly reassigned in this method), so it's the
+        // safe one to serialize.
+        userRepository.save(user);
+        return ResponseEntity.ok(toUserDto(user));
     }
 
     @DeleteMapping("/{employeeId}")
@@ -242,34 +282,29 @@ public class EmployeesController {
             }
         }
 
-        // Simplified implementation - would query actual leave ledger
-        LeaveLedgerSummaryDto ledger1 = new LeaveLedgerSummaryDto();
-        ledger1.setCategoryId(1);
-        ledger1.setCategoryName("Annual Leave");
-        ledger1.setFiscalYear(year != null ? year : 2024);
-        ledger1.setOpeningBalance(12.0);
-        ledger1.setAccrued(0.0);
-        ledger1.setUsed(5.0);
-        ledger1.setEncashed(0.0);
-        ledger1.setCarriedForward(0.0);
-        ledger1.setClosingBalance(7.0);
-        ledger1.setAvailableBalance(7.0);
+        int fiscalYear = year != null ? year : LocalDate.now().getYear();
+        List<LeaveLedger> ledgerEntries = leaveLedgerProvisioningService.getOrInitializeLedger(user, fiscalYear);
 
-        LeaveLedgerSummaryDto ledger2 = new LeaveLedgerSummaryDto();
-        ledger2.setCategoryId(2);
-        ledger2.setCategoryName("Sick Leave");
-        ledger2.setFiscalYear(year != null ? year : 2024);
-        ledger2.setOpeningBalance(6.0);
-        ledger2.setAccrued(0.0);
-        ledger2.setUsed(2.0);
-        ledger2.setEncashed(0.0);
-        ledger2.setCarriedForward(0.0);
-        ledger2.setClosingBalance(4.0);
-        ledger2.setAvailableBalance(4.0);
-
-        List<LeaveLedgerSummaryDto> ledger = List.of(ledger1, ledger2);
+        List<LeaveLedgerSummaryDto> ledger = ledgerEntries.stream()
+                .map(this::toLeaveLedgerSummaryDto)
+                .collect(Collectors.toList());
 
         return ResponseEntity.ok(ledger);
+    }
+
+    private LeaveLedgerSummaryDto toLeaveLedgerSummaryDto(LeaveLedger ledger) {
+        LeaveLedgerSummaryDto dto = new LeaveLedgerSummaryDto();
+        dto.setCategoryId(ledger.getCategory().getId());
+        dto.setCategoryName(ledger.getCategory().getName());
+        dto.setFiscalYear(ledger.getFiscalYear());
+        dto.setOpeningBalance(ledger.getOpeningBalance().doubleValue());
+        dto.setAccrued(ledger.getAccrued().doubleValue());
+        dto.setUsed(ledger.getUsed().doubleValue());
+        dto.setEncashed(ledger.getEncashed().doubleValue());
+        dto.setCarriedForward(ledger.getCarriedForward().doubleValue());
+        dto.setClosingBalance(ledger.getClosingBalance().doubleValue());
+        dto.setAvailableBalance(ledger.getClosingBalance().doubleValue());
+        return dto;
     }
 
     @PostMapping("/{employeeId}/quota")
@@ -331,6 +366,49 @@ public class EmployeesController {
         return ResponseEntity.ok().build();
     }
 
+    // Generates the next sequential employee code for a given role, e.g.
+    // EMP001, EMP002, EMP003 -> EMP004 for regular employees, HR001 -> HR002
+    // for HR admins, MGR001 -> MGR002 for managers. Only codes matching the
+    // role's prefix + digits shape are considered, so any legacy/malformed
+    // codes (e.g. the old "EMP-<timestamp>" fallback) are ignored rather
+    // than blowing up the sequence. Width is preserved from the highest
+    // matching code found (defaulting to 3 digits, e.g. EMP001) so the
+    // numbering stays consistent as the count grows past 999.
+    private String employeeCodePrefixForRole(String roleCode) {
+        if (roleCode == null) return "EMP";
+        return switch (roleCode) {
+            case "HR_ADMIN" -> "HR";
+            case "MANAGER" -> "MGR";
+            default -> "EMP";
+        };
+    }
+
+    private String generateNextEmployeeCode(String roleCode) {
+        String prefix = employeeCodePrefixForRole(roleCode);
+        Pattern codePattern = Pattern.compile("^" + prefix + "(\\d+)$");
+        List<User> existing = userRepository.findByEmployeeCodeStartingWith(prefix);
+
+        int maxNumber = 0;
+        int width = 3;
+        for (User u : existing) {
+            String code = u.getEmployeeCode();
+            if (code == null) continue;
+
+            Matcher matcher = codePattern.matcher(code);
+            if (matcher.matches()) {
+                String digits = matcher.group(1);
+                int number = Integer.parseInt(digits);
+                if (number > maxNumber) {
+                    maxNumber = number;
+                    width = digits.length();
+                }
+            }
+        }
+
+        int next = maxNumber + 1;
+        return String.format(prefix + "%0" + width + "d", next);
+    }
+
     private UserDto toUserDto(User user) {
         UserDto dto = new UserDto();
         dto.setId(user.getId());
@@ -344,19 +422,21 @@ public class EmployeesController {
         dto.setWorkLocation(user.getWorkLocation());
         dto.setEmploymentType(user.getEmploymentType());
         dto.setDateOfJoining(user.getDateOfJoining());
-        
+
+        // Use the centralized avatar resolver
+        dto.setAvatarUrl(attachmentService.resolveAvatarUrl(user.getId()));
+
         if (user.getReportsTo() != null) {
             dto.setReportsToId(user.getReportsTo().getId());
             // Safe getName() call with null check
             String reportsToName = user.getReportsTo().getName();
             dto.setReportsToName(reportsToName != null ? reportsToName : "Unknown");
         }
-        
-        // In real implementation, set department info
-        // if (user.getDepartment() != null) {
-        //     dto.setDepartmentId(user.getDepartment().getId());
-        //     dto.setDepartmentName(user.getDepartment().getName());
-        // }
+
+        if (user.getDepartment() != null) {
+            dto.setDepartmentId(user.getDepartment().getId());
+            dto.setDepartmentName(user.getDepartment().getName());
+        }
 
         return dto;
     }

@@ -6,6 +6,9 @@ import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
 
 public class CompOffRequestCreate {
+    @NotNull(message = "userId is required")
+    private Long userId;
+    
     @NotNull(message = "workedOn is required")
     private LocalDate workedOn;
     
@@ -15,11 +18,22 @@ public class CompOffRequestCreate {
     
     @NotNull(message = "hoursWorked is required")
     private Double hoursWorked;
+    
+    @NotNull(message = "expiryDate is required")
+    private LocalDate expiryDate;
 
     // Constructors
     public CompOffRequestCreate() {}
 
     // Getters and Setters
+    public Long getUserId() {
+        return userId;
+    }
+
+    public void setUserId(Long userId) {
+        this.userId = userId;
+    }
+
     public LocalDate getWorkedOn() {
         return workedOn;
     }
@@ -42,5 +56,13 @@ public class CompOffRequestCreate {
 
     public void setHoursWorked(Double hoursWorked) {
         this.hoursWorked = hoursWorked;
+    }
+
+    public LocalDate getExpiryDate() {
+        return expiryDate;
+    }
+
+    public void setExpiryDate(LocalDate expiryDate) {
+        this.expiryDate = expiryDate;
     }
 }

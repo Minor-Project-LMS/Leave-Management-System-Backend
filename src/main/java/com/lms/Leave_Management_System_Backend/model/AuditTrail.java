@@ -1,6 +1,9 @@
 package com.lms.Leave_Management_System_Backend.model;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 import java.time.LocalDateTime;
 
 @Entity
@@ -29,9 +32,11 @@ public class AuditTrail {
     @Column(name = "performed_at", nullable = false)
     private LocalDateTime performedAt;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "before_state", columnDefinition = "JSONB")
     private String beforeState;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "after_state", columnDefinition = "JSONB")
     private String afterState;
 

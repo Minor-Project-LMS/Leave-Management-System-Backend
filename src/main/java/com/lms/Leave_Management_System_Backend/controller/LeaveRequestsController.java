@@ -1,22 +1,15 @@
 package com.lms.Leave_Management_System_Backend.controller;
 
 import com.lms.Leave_Management_System_Backend.dto.*;
-import com.lms.Leave_Management_System_Backend.exception.BusinessRuleException;
 import com.lms.Leave_Management_System_Backend.exception.ConflictException;
 import com.lms.Leave_Management_System_Backend.exception.ResourceNotFoundException;
 import com.lms.Leave_Management_System_Backend.exception.SecurityException;
-import com.lms.Leave_Management_System_Backend.model.ApprovalDelegation;
+import com.lms.Leave_Management_System_Backend.model.*;
 import com.lms.Leave_Management_System_Backend.model.LeaveApproval;
-import com.lms.Leave_Management_System_Backend.model.LeaveLedger;
-import com.lms.Leave_Management_System_Backend.model.LeaveRequest;
-import com.lms.Leave_Management_System_Backend.model.User;
-import com.lms.Leave_Management_System_Backend.repository.ApprovalDelegationRepository;
-import com.lms.Leave_Management_System_Backend.repository.LeaveApprovalRepository;
-import com.lms.Leave_Management_System_Backend.repository.LeaveCategoryRepository;
-import com.lms.Leave_Management_System_Backend.repository.LeaveLedgerRepository;
-import com.lms.Leave_Management_System_Backend.repository.LeaveRequestRepository;
-import com.lms.Leave_Management_System_Backend.repository.UserRepository;
+import com.lms.Leave_Management_System_Backend.repository.*;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
+import com.lms.Leave_Management_System_Backend.service.AttachmentService;
+import com.lms.Leave_Management_System_Backend.service.LeaveLedgerProvisioningService;
 import org.springframework.transaction.annotation.Transactional;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
@@ -27,11 +20,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.math.BigDecimal;
-import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
@@ -46,8 +38,13 @@ public class LeaveRequestsController {
     private final LeaveApprovalRepository leaveApprovalRepository;
     private final ApprovalDelegationRepository delegationRepository;
     private final LeaveLedgerRepository leaveLedgerRepository;
-    
-    // In-memory comment storage (comment table would be better for production)
+    private final NotificationQueueRepository notificationQueueRepository;
+    private final LeavePolicyRepository leavePolicyRepository;
+    private final com.lms.Leave_Management_System_Backend.service.AttachmentService attachmentService;
+    private final com.lms.Leave_Management_System_Backend.service.LeaveLedgerProvisioningService leaveLedgerProvisioningService;
+    private final com.lms.Leave_Management_System_Backend.repository.CompOffRequestRepository compOffRequestRepository;
+
+    // In-memory comment storage
     private static final Map<Long, List<CommentDto>> commentStorage = new ConcurrentHashMap<>();
 
     public LeaveRequestsController(
@@ -56,35 +53,60 @@ public class LeaveRequestsController {
             LeaveCategoryRepository leaveCategoryRepository,
             LeaveApprovalRepository leaveApprovalRepository,
             ApprovalDelegationRepository delegationRepository,
-            LeaveLedgerRepository leaveLedgerRepository) {
+            LeaveLedgerRepository leaveLedgerRepository,
+            NotificationQueueRepository notificationQueueRepository,
+            LeavePolicyRepository leavePolicyRepository,
+            AttachmentService attachmentService,
+            LeaveLedgerProvisioningService leaveLedgerProvisioningService,
+            com.lms.Leave_Management_System_Backend.repository.CompOffRequestRepository compOffRequestRepository) {
         this.leaveRequestRepository = leaveRequestRepository;
         this.userRepository = userRepository;
         this.leaveCategoryRepository = leaveCategoryRepository;
         this.leaveApprovalRepository = leaveApprovalRepository;
         this.delegationRepository = delegationRepository;
         this.leaveLedgerRepository = leaveLedgerRepository;
+        this.notificationQueueRepository = notificationQueueRepository;
+        this.leavePolicyRepository = leavePolicyRepository;
+        this.attachmentService = attachmentService;
+        this.leaveLedgerProvisioningService = leaveLedgerProvisioningService;
+        this.compOffRequestRepository = compOffRequestRepository;
     }
 
     @PostMapping
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
     public ResponseEntity<ApiResponse<LeaveRequestDto>> createLeaveRequest(
             @Valid @RequestBody LeaveRequestCreate request,
             Authentication authentication) {
-        
+
         String email = authentication.getName();
         User user = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
 
-        LeaveRequest leaveRequest = new LeaveRequest();
-        leaveRequest.setUser(user);
-        leaveRequest.setCategory(leaveCategoryRepository.findById(request.getCategoryId())
-                .orElseThrow(() -> new ResourceNotFoundException("LeaveCategory", request.getCategoryId())));
-        leaveRequest.setStartDate(request.getStartDate());
-        leaveRequest.setEndDate(request.getEndDate());
-        leaveRequest.setSessionType(LeaveRequest.SessionType.valueOf(request.getSessionType()));
+        LeaveCategory category = leaveCategoryRepository.findById(request.getCategoryId())
+                .orElseThrow(() -> new ResourceNotFoundException("LeaveCategory", request.getCategoryId()));
 
         // Calculate totalDays based on dates and session type
         BigDecimal calculatedDays = calculateTotalDays(request.getStartDate(), request.getEndDate(), request.getSessionType());
+
+        // Validate max continuous days limit according to policy
+        validateConsecutiveDays(user, category, calculatedDays);
+
+        // Check for comp-off date conflicts
+        validateCompOffDateConflict(user, request.getStartDate(), request.getEndDate());
+
+        // Validate comp-off grant exists and is APPROVED if this is a comp-off claim
+        // Note: Balance validation happens during approval, not at submission
+        if (request.getCompOffRequestId() != null) {
+            validateCompOffGrantExists(user, request.getCompOffRequestId(), request.getCategoryId(), request.getEndDate());
+        }
+
+        LeaveRequest leaveRequest = new LeaveRequest();
+        leaveRequest.setUser(user);
+        leaveRequest.setCategory(category);
+        leaveRequest.setStartDate(request.getStartDate());
+        leaveRequest.setEndDate(request.getEndDate());
+        leaveRequest.setSessionType(LeaveRequest.SessionType.valueOf(request.getSessionType()));
         leaveRequest.setTotalDays(calculatedDays);
 
         leaveRequest.setReason(request.getReason());
@@ -103,17 +125,23 @@ public class LeaveRequestsController {
         if (request.getStatus() != null && "DRAFT".equals(request.getStatus())) {
             leaveRequest.setStatus(LeaveRequest.RequestStatus.DRAFT);
         } else {
+            // This is where a request actually starts competing for
+            // approval, so this is where LOP gets calculated and
+            // overlapping pending/approved requests get rejected — a
+            // DRAFT save skips all of this since it isn't submitted yet.
+            applyPendingSubmissionChecks(leaveRequest, user);
+
             leaveRequest.setStatus(LeaveRequest.RequestStatus.PENDING_L1);
-            
+
             // Set the approver when creating a non-DRAFT request
             User reportsTo = user.getReportsTo();
             if (reportsTo != null) {
                 // Check if there's an active delegation for the manager
-                Optional<ApprovalDelegation> activeDelegation = 
-                    delegationRepository.findActiveDelegationsForDelegatorOnDate(reportsTo.getId(), java.time.LocalDate.now())
-                    .stream()
-                    .findFirst();
-                
+                Optional<ApprovalDelegation> activeDelegation =
+                        delegationRepository.findActiveDelegationsForDelegatorOnDate(reportsTo.getId(), java.time.LocalDate.now())
+                                .stream()
+                                .findFirst();
+
                 if (activeDelegation.isPresent()) {
                     leaveRequest.setCurrentApprover(activeDelegation.get().getDelegate());
                 } else {
@@ -125,36 +153,113 @@ public class LeaveRequestsController {
         leaveRequest.setAppliedAt(LocalDateTime.now());
 
         LeaveRequest saved = leaveRequestRepository.save(leaveRequest);
+
+        // Send notification to employee
+        createNotification(
+                saved.getUser(),
+                "LEAVE_SUBMITTED",
+                "Leave Request Submitted",
+                "Your leave request for " + saved.getTotalDays() + " day(s) has been submitted.",
+                "LEAVE_REQUEST",
+                saved.getId()
+        );
+
+        // Send notification to manager for approval
+        if (saved.getCurrentApprover() != null) {
+            createNotification(
+                    saved.getCurrentApprover(),
+                    "LEAVE_APPROVAL_PENDING",
+                    "Leave Approval Required",
+                    "A leave request from " + saved.getUser().getName() + " for " + saved.getTotalDays() + " day(s) requires your approval.",
+                    "LEAVE_APPROVAL",
+                    saved.getId()
+            );
+        }
+
         LeaveRequestDto dto = toLeaveRequestDto(saved);
 
         return ResponseEntity.status(201).body(new ApiResponse<LeaveRequestDto>(true, dto));
     }
 
     /**
-     * Calculate total days for leave request excluding weekends
+     * Calculate total days for a leave request under the Sandwich Leave
+     * policy — see notes below.
      */
+    // Sandwich Leave policy: when a leave request spans a weekend (start
+    // date before the weekend, end date after it, in one continuous
+    // request), the weekend days count as leave too — they're "sandwiched"
+    // between two leave days, rather than being free days off in the
+    // middle of a leave stretch. In practice, for a single continuous
+    // date range this just means every calendar day in the range counts.
     private BigDecimal calculateTotalDays(LocalDate startDate, LocalDate endDate, String sessionType) {
-        long businessDays = 0;
-
-        // Count business days (Monday-Friday)
-        LocalDate current = startDate;
-        while (!current.isAfter(endDate)) {
-            if (current.getDayOfWeek() != DayOfWeek.SATURDAY && current.getDayOfWeek() != DayOfWeek.SUNDAY) {
-                businessDays++;
-            }
-            current = current.plusDays(1);
-        }
+        long calendarDays = java.time.temporal.ChronoUnit.DAYS.between(startDate, endDate) + 1;
 
         // Adjust for session type
         if ("FIRST_HALF".equals(sessionType) || "SECOND_HALF".equals(sessionType)) {
-            return BigDecimal.valueOf(businessDays * 0.5);
+            return BigDecimal.valueOf(calendarDays * 0.5);
         } else {
-            return BigDecimal.valueOf(businessDays);
+            return BigDecimal.valueOf(calendarDays);
+        }
+    }
+
+    private boolean datesOverlap(LeaveRequest a, LeaveRequest b) {
+        return !(a.getEndDate().isBefore(b.getStartDate()) || a.getStartDate().isAfter(b.getEndDate()));
+    }
+
+    // Runs everything a leave request needs once it's actually competing
+    // for approval (as opposed to sitting as a draft): computes the
+    // Loss-of-Pay split against the current balance, and rejects it if it
+    // overlaps another pending or approved request for the same employee.
+    // Shared by createLeaveRequest() (the normal "Apply Leave" submit path)
+    // and submitLeaveRequest() (converting an existing draft to pending),
+    // so the two can't drift out of sync the way they previously did.
+    private void applyPendingSubmissionChecks(LeaveRequest leaveRequest, User currentUser) {
+        int currentYear = java.time.Year.now().getValue();
+        leaveLedgerProvisioningService.getOrInitializeLedger(currentUser, currentYear);
+        Optional<LeaveLedger> ledger = leaveLedgerRepository.findByUserIdAndCategoryIdAndFiscalYear(
+                leaveRequest.getUser().getId(),
+                leaveRequest.getCategory().getId(),
+                currentYear
+        );
+
+        BigDecimal availableBalance = ledger.map(LeaveLedger::getClosingBalance).orElse(BigDecimal.ZERO);
+        BigDecimal lopDays = leaveRequest.getTotalDays().subtract(availableBalance);
+        leaveRequest.setLopDays(lopDays.compareTo(BigDecimal.ZERO) > 0 ? lopDays : BigDecimal.ZERO);
+
+        // Check for an overlapping request already in flight — either a
+        // pending one awaiting approval, or one that's already approved.
+        // Checking these separately gives a clearer message: pending vs.
+        // approved mean different things to the employee.
+        List<LeaveRequest> overlappingPending = leaveRequestRepository.findByUserIdAndStatusIn(
+                leaveRequest.getUser().getId(),
+                List.of(LeaveRequest.RequestStatus.PENDING_L1, LeaveRequest.RequestStatus.PENDING_L2)
+        );
+        boolean hasPendingOverlap = overlappingPending.stream()
+                .filter(existing -> leaveRequest.getId() == null || !existing.getId().equals(leaveRequest.getId()))
+                .anyMatch(existing -> datesOverlap(existing, leaveRequest));
+
+        if (hasPendingOverlap) {
+            throw new ConflictException("You have already submitted a leave request that is pending approval for this date.");
+        }
+
+        // Check for overlapping approved requests
+        List<LeaveRequest> overlappingApproved = leaveRequestRepository.findByUserIdAndStatus(
+                leaveRequest.getUser().getId(),
+                LeaveRequest.RequestStatus.APPROVED
+        );
+
+        boolean hasOverlap = overlappingApproved.stream()
+                .filter(existing -> leaveRequest.getId() == null || !existing.getId().equals(leaveRequest.getId()))
+                .anyMatch(existing -> datesOverlap(existing, leaveRequest));
+
+        if (hasOverlap) {
+            throw new ConflictException("Your leave request is already approved for this date.");
         }
     }
 
     @GetMapping
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
     public ResponseEntity<PaginatedResponse<LeaveRequestDto>> listLeaveRequests(
             @RequestParam(required = false) String status,
             @RequestParam(required = false) Integer categoryId,
@@ -166,7 +271,7 @@ public class LeaveRequestsController {
             @RequestParam(defaultValue = "20") int limit,
             @RequestParam(defaultValue = "recent") String sort,
             Authentication authentication) {
-        
+
         String email = authentication.getName();
         User currentUser = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
@@ -174,7 +279,7 @@ public class LeaveRequestsController {
         // Map sort enum values to actual sort parameters
         String sortProperty;
         Sort.Direction direction;
-        
+
         if ("recent".equalsIgnoreCase(sort)) {
             sortProperty = "appliedAt";
             direction = Sort.Direction.DESC;
@@ -185,12 +290,11 @@ public class LeaveRequestsController {
             // Fallback to legacy format "property,direction"
             String[] sortParams = sort.split(",");
             sortProperty = sortParams[0];
-            direction = sortParams.length > 1 && sortParams[1].equalsIgnoreCase("desc") 
-                    ? Sort.Direction.DESC 
+            direction = sortParams.length > 1 && sortParams[1].equalsIgnoreCase("desc")
+                    ? Sort.Direction.DESC
                     : Sort.Direction.ASC;
         }
-        
-        // Contract uses 1-based page numbers, Spring uses 0-based
+
         Pageable pageable = PageRequest.of(page - 1, limit, Sort.by(direction, sortProperty));
         Page<LeaveRequest> leaveRequests;
 
@@ -198,8 +302,8 @@ public class LeaveRequestsController {
         if (currentUser.getRole().getRoleCode().equals("EMPLOYEE")) {
             if (status != null) {
                 leaveRequests = leaveRequestRepository.findByUserIdAndStatus(
-                        currentUser.getId(), 
-                        LeaveRequest.RequestStatus.valueOf(status), 
+                        currentUser.getId(),
+                        LeaveRequest.RequestStatus.valueOf(status),
                         pageable);
             } else {
                 leaveRequests = leaveRequestRepository.findByUserId(currentUser.getId(), pageable);
@@ -224,7 +328,7 @@ public class LeaveRequestsController {
                 .collect(Collectors.toList());
 
         PageResponse pageResponse = new PageResponse(
-                page, // Return 1-based page number as per contract
+                page,
                 limit,
                 leaveRequests.getTotalElements(),
                 leaveRequests.getTotalPages()
@@ -235,10 +339,11 @@ public class LeaveRequestsController {
 
     @GetMapping("/{requestId}")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
     public ResponseEntity<ApiResponse<LeaveRequestDto>> getLeaveRequest(
             @PathVariable Long requestId,
             Authentication authentication) {
-        
+
         LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
                 .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
 
@@ -247,8 +352,8 @@ public class LeaveRequestsController {
         User currentUser = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
 
-        if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") && 
-            !leaveRequest.getUser().getId().equals(currentUser.getId())) {
+        if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") &&
+                !leaveRequest.getUser().getId().equals(currentUser.getId())) {
             throw new SecurityException("You can only view your own leave requests");
         }
 
@@ -258,11 +363,12 @@ public class LeaveRequestsController {
 
     @PatchMapping("/{requestId}")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
     public ResponseEntity<ApiResponse<LeaveRequestDto>> updateLeaveRequest(
             @PathVariable Long requestId,
             @Valid @RequestBody LeaveRequestCreate request,
             Authentication authentication) {
-        
+
         LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
                 .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
 
@@ -279,14 +385,19 @@ public class LeaveRequestsController {
             throw new SecurityException("You can only edit your own leave requests");
         }
 
-        leaveRequest.setCategory(leaveCategoryRepository.findById(request.getCategoryId())
-                .orElseThrow(() -> new ResourceNotFoundException("LeaveCategory", request.getCategoryId())));
-        leaveRequest.setStartDate(request.getStartDate());
-        leaveRequest.setEndDate(request.getEndDate());
-        leaveRequest.setSessionType(LeaveRequest.SessionType.valueOf(request.getSessionType()));
+        LeaveCategory category = leaveCategoryRepository.findById(request.getCategoryId())
+                .orElseThrow(() -> new ResourceNotFoundException("LeaveCategory", request.getCategoryId()));
 
         // Recalculate totalDays based on updated dates and session type
         BigDecimal calculatedDays = calculateTotalDays(request.getStartDate(), request.getEndDate(), request.getSessionType());
+
+        // Validate max continuous days limit according to policy
+        validateConsecutiveDays(currentUser, category, calculatedDays);
+
+        leaveRequest.setCategory(category);
+        leaveRequest.setStartDate(request.getStartDate());
+        leaveRequest.setEndDate(request.getEndDate());
+        leaveRequest.setSessionType(LeaveRequest.SessionType.valueOf(request.getSessionType()));
         leaveRequest.setTotalDays(calculatedDays);
 
         leaveRequest.setReason(request.getReason());
@@ -311,10 +422,11 @@ public class LeaveRequestsController {
 
     @PostMapping("/{requestId}/submit")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
     public ResponseEntity<ApiResponse<LeaveRequestDto>> submitLeaveRequest(
             @PathVariable Long requestId,
             Authentication authentication) {
-        
+
         LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
                 .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
 
@@ -331,47 +443,23 @@ public class LeaveRequestsController {
             throw new SecurityException("You can only submit your own leave requests");
         }
 
-        // Check if user has sufficient leave balance
-        int currentYear = java.time.Year.now().getValue();
-        Optional<LeaveLedger> ledger = leaveLedgerRepository.findByUserIdAndCategoryIdAndFiscalYear(
-            leaveRequest.getUser().getId(), 
-            leaveRequest.getCategory().getId(), 
-            currentYear
-        );
-        
-        if (ledger.isPresent() && ledger.get().getClosingBalance().compareTo(leaveRequest.getTotalDays()) < 0) {
-            throw new ConflictException("Insufficient leave balance. Available: " + ledger.get().getClosingBalance() + ", Required: " + leaveRequest.getTotalDays());
-        }
+        // Validate max continuous days limit according to policy
+        validateConsecutiveDays(currentUser, leaveRequest.getCategory(), leaveRequest.getTotalDays());
 
-        // Check for overlapping approved requests
-        List<LeaveRequest> overlappingApproved = leaveRequestRepository.findByUserIdAndStatus(
-            leaveRequest.getUser().getId(),
-            LeaveRequest.RequestStatus.APPROVED
-        );
-        
-        // Filter for overlapping dates
-        boolean hasOverlap = overlappingApproved.stream()
-            .anyMatch(existing -> {
-                return !(existing.getEndDate().isBefore(leaveRequest.getStartDate()) || 
-                         existing.getStartDate().isAfter(leaveRequest.getEndDate()));
-            });
-        
-        if (hasOverlap) {
-            throw new ConflictException("You have overlapping approved leave requests for this period");
-        }
+        applyPendingSubmissionChecks(leaveRequest, currentUser);
 
         // Set to pending and assign approver
         leaveRequest.setStatus(LeaveRequest.RequestStatus.PENDING_L1);
-        
+
         // Resolve the approver considering delegation
         User reportsTo = leaveRequest.getUser().getReportsTo();
         if (reportsTo != null) {
             // Check if there's an active delegation for the manager
-            Optional<ApprovalDelegation> activeDelegation = 
-                delegationRepository.findActiveDelegationsForDelegatorOnDate(reportsTo.getId(), java.time.LocalDate.now())
-                .stream()
-                .findFirst();
-            
+            Optional<ApprovalDelegation> activeDelegation =
+                    delegationRepository.findActiveDelegationsForDelegatorOnDate(reportsTo.getId(), java.time.LocalDate.now())
+                            .stream()
+                            .findFirst();
+
             if (activeDelegation.isPresent()) {
                 leaveRequest.setCurrentApprover(activeDelegation.get().getDelegate());
             } else {
@@ -382,7 +470,7 @@ public class LeaveRequestsController {
 
         LeaveRequest saved = leaveRequestRepository.save(leaveRequest);
         LeaveRequestDto dto = toLeaveRequestDto(saved);
-        
+
         return ResponseEntity.ok(new ApiResponse<LeaveRequestDto>(true, dto));
     }
 
@@ -399,7 +487,7 @@ public class LeaveRequestsController {
 
         // Check if request is awaiting decision
         if (leaveRequest.getStatus() != LeaveRequest.RequestStatus.PENDING_L1 &&
-            leaveRequest.getStatus() != LeaveRequest.RequestStatus.PENDING_L2) {
+                leaveRequest.getStatus() != LeaveRequest.RequestStatus.PENDING_L2) {
             throw new ConflictException("Request is not currently awaiting a decision");
         }
 
@@ -416,10 +504,9 @@ public class LeaveRequestsController {
         // Check if user is the designated approver or an active delegate
         boolean isDelegatedApprover = false;
         if (!currentApprover.getId().equals(currentUser.getId())) {
-            // Check if there's an active delegation
-            Optional<ApprovalDelegation> activeDelegation = 
-                delegationRepository.findActiveDelegation(currentApprover.getId(), currentUser.getId(), java.time.LocalDate.now());
-            
+            Optional<ApprovalDelegation> activeDelegation =
+                    delegationRepository.findActiveDelegation(currentApprover.getId(), currentUser.getId(), java.time.LocalDate.now());
+
             if (activeDelegation.isEmpty()) {
                 throw new SecurityException("You are not the current approver or an active delegate for this request");
             }
@@ -432,86 +519,114 @@ public class LeaveRequestsController {
         }
 
         // Comments mandatory for rejection
-        if ("REJECTED".equals(decisionRequest.getDecision()) && 
-            (decisionRequest.getComments() == null || decisionRequest.getComments().trim().isEmpty())) {
+        if ("REJECTED".equals(decisionRequest.getDecision()) &&
+                (decisionRequest.getComments() == null || decisionRequest.getComments().trim().isEmpty())) {
             throw new ConflictException("Comments are mandatory on rejection");
         }
 
-        // Check for overlapping approved requests for the same user
-        if ("APPROVED".equals(decisionRequest.getDecision())) {
-            List<LeaveRequest> overlappingApproved = leaveRequestRepository.findByUserIdAndStatus(
-                leaveRequest.getUser().getId(),
-                LeaveRequest.RequestStatus.APPROVED
-            );
-            
-            // Filter for overlapping dates (excluding current request)
-            boolean hasOverlap = overlappingApproved.stream()
-                .filter(existing -> !existing.getId().equals(leaveRequest.getId()))
-                .anyMatch(existing -> {
-                    return !(existing.getEndDate().isBefore(leaveRequest.getStartDate()) || 
-                             existing.getStartDate().isAfter(leaveRequest.getEndDate()));
-                });
-            
-            if (hasOverlap) {
-                throw new ConflictException("Employee has overlapping approved leave requests for this period");
-            }
-        }
+        // Note: the overlapping-approved-leave check intentionally lives
+        // only in submitLeaveRequest() (employee-side), not here. It's a
+        // restriction on what an employee can submit, not a gate on what
+        // an approver can approve — a request that made it to the
+        // approval queue already passed that check once, and re-enforcing
+        // it here just blocks legitimate approvals (e.g. an earlier
+        // approved request that's since been cancelled/withdrawn) for no
+        // benefit.
 
         // Record the approval history
         LeaveApproval approval = new LeaveApproval();
         approval.setRequest(leaveRequest);
         approval.setApprover(currentUser);
         approval.setLevel(leaveRequest.getStatus() == LeaveRequest.RequestStatus.PENDING_L1 ? (short) 1 : (short) 2);
-        approval.setDecision("APPROVED".equals(decisionRequest.getDecision()) ? 
-            LeaveApproval.Decision.APPROVED : LeaveApproval.Decision.REJECTED);
+        approval.setDecision("APPROVED".equals(decisionRequest.getDecision()) ?
+                LeaveApproval.Decision.APPROVED : LeaveApproval.Decision.REJECTED);
         approval.setDecidedAt(LocalDateTime.now());
         approval.setComments(decisionRequest.getComments());
-        // Note: actingAsDelegateFor is temporarily disabled pending database migration
-        // if (isDelegatedApprover) {
-        //     approval.setActingAsDelegateFor(currentApprover);
-        // }
         leaveApprovalRepository.save(approval);
 
         // Update the request status
         if ("APPROVED".equals(decisionRequest.getDecision())) {
-            // Check if need HR approval based on days threshold
             if (leaveRequest.getTotalDays().compareTo(BigDecimal.valueOf(5)) > 0 &&
-                leaveRequest.getStatus() == LeaveRequest.RequestStatus.PENDING_L1) {
+                    leaveRequest.getStatus() == LeaveRequest.RequestStatus.PENDING_L1) {
                 // Move to HR approval
                 leaveRequest.setStatus(LeaveRequest.RequestStatus.PENDING_L2);
-                // Set currentApprover to first HR admin (simplified)
                 User hrAdmin = userRepository.findFirstByRole_RoleCode("HR_ADMIN")
-                    .orElseThrow(() -> new ResourceNotFoundException("HR Admin", "role"));
+                        .orElseThrow(() -> new ResourceNotFoundException("HR Admin", "role"));
                 leaveRequest.setCurrentApprover(hrAdmin);
             } else {
+                // Validate comp-off balance before final approval
+                validateCompOffBalance(leaveRequest);
+
                 // Final approval - update leave ledger
                 int currentYear = java.time.Year.now().getValue();
+                // The ledger row for this category/year might not exist yet
+                // (e.g. nobody has opened the Leave Ledger page for this
+                // employee this year) — provisioning it here, rather than
+                // silently skipping the deduction when it's missing, is
+                // what actually made balances update on approval.
+                leaveLedgerProvisioningService.getOrInitializeLedger(leaveRequest.getUser(), currentYear);
                 Optional<LeaveLedger> ledger = leaveLedgerRepository.findByUserIdAndCategoryIdAndFiscalYear(
-                    leaveRequest.getUser().getId(), 
-                    leaveRequest.getCategory().getId(), 
-                    currentYear
+                        leaveRequest.getUser().getId(),
+                        leaveRequest.getCategory().getId(),
+                        currentYear
                 );
-                
+
                 if (ledger.isPresent()) {
                     LeaveLedger leaveLedger = ledger.get();
-                    if (leaveLedger.getClosingBalance().compareTo(leaveRequest.getTotalDays()) < 0) {
-                        throw new ConflictException("Insufficient leave balance at approval time");
-                    }
-                    leaveLedger.setUsed(leaveLedger.getUsed().add(leaveRequest.getTotalDays()));
-                    leaveLedger.setClosingBalance(leaveLedger.getClosingBalance().subtract(leaveRequest.getTotalDays()));
+                    // Re-check against the current balance at approval time
+                    // (it may have shifted since submission) and recompute
+                    // the LOP split, rather than blocking the approval
+                    // outright when balance is short.
+                    BigDecimal availableBalance = leaveLedger.getClosingBalance();
+                    BigDecimal lopDays = leaveRequest.getTotalDays().subtract(availableBalance);
+                    lopDays = lopDays.compareTo(BigDecimal.ZERO) > 0 ? lopDays : BigDecimal.ZERO;
+                    leaveRequest.setLopDays(lopDays);
+
+                    BigDecimal paidDays = leaveRequest.getTotalDays().subtract(lopDays);
+                    leaveLedger.setUsed(leaveLedger.getUsed().add(paidDays));
+                    leaveLedger.setClosingBalance(leaveLedger.getClosingBalance().subtract(paidDays));
                     leaveLedgerRepository.save(leaveLedger);
                 }
-                
+
                 leaveRequest.setStatus(LeaveRequest.RequestStatus.APPROVED);
                 leaveRequest.setCurrentApprover(null);
             }
         } else {
-            // Rejected
             leaveRequest.setStatus(LeaveRequest.RequestStatus.REJECTED);
             leaveRequest.setCurrentApprover(null);
         }
 
         LeaveRequest saved = leaveRequestRepository.save(leaveRequest);
+        if ("APPROVED".equals(decisionRequest.getDecision())) {
+            if (saved.getStatus() == LeaveRequest.RequestStatus.APPROVED) {
+                createNotification(
+                        saved.getUser(),
+                        "LEAVE_APPROVED",
+                        "Leave Request Approved",
+                        "Your leave request from " + saved.getStartDate() + " to " + saved.getEndDate() + " has been approved.",
+                        "LEAVE_APPROVAL",
+                        saved.getId()
+                );
+            } else if (saved.getStatus() == LeaveRequest.RequestStatus.PENDING_L2) {
+                createNotification(
+                        saved.getCurrentApprover(),
+                        "LEAVE_HR_APPROVAL_PENDING",
+                        "HR Approval Required",
+                        "A leave request for " + saved.getUser().getName() + " requires HR level approval.",
+                        "LEAVE_APPROVAL",
+                        saved.getId()
+                );
+            }
+        } else if ("REJECTED".equals(decisionRequest.getDecision())) {
+            createNotification(
+                    saved.getUser(),
+                    "LEAVE_REJECTED",
+                    "Leave Request Rejected",
+                    "Your leave request was rejected. Reason: " + decisionRequest.getComments(),
+                    "LEAVE_APPROVAL",
+                    saved.getId()
+            );
+        }
         LeaveRequestDto dto = toLeaveRequestDto(saved);
 
         return ResponseEntity.ok(new ApiResponse<LeaveRequestDto>(true, dto));
@@ -519,6 +634,7 @@ public class LeaveRequestsController {
 
     @PostMapping("/{requestId}/withdraw")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
     public ResponseEntity<ApiResponse<LeaveRequestDto>> withdrawLeaveRequest(
             @PathVariable Long requestId,
             @RequestBody(required = false) com.lms.Leave_Management_System_Backend.dto.WithdrawRequest withdrawRequest,
@@ -527,13 +643,11 @@ public class LeaveRequestsController {
         LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
                 .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
 
-        // Check if can be withdrawn (only pending states)
         if (leaveRequest.getStatus() != LeaveRequest.RequestStatus.PENDING_L1 &&
-            leaveRequest.getStatus() != LeaveRequest.RequestStatus.PENDING_L2) {
+                leaveRequest.getStatus() != LeaveRequest.RequestStatus.PENDING_L2) {
             throw new ConflictException("Only pending requests can be withdrawn");
         }
 
-        // Check ownership
         String email = authentication.getName();
         User currentUser = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
@@ -555,6 +669,7 @@ public class LeaveRequestsController {
 
     @GetMapping("/{requestId}/approvals")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
     public ResponseEntity<List<LeaveApprovalDto>> getApprovals(
             @PathVariable Long requestId,
             Authentication authentication) {
@@ -562,17 +677,15 @@ public class LeaveRequestsController {
         LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
                 .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
 
-        // Check access permissions
         String email = authentication.getName();
         User currentUser = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
 
         if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") &&
-            !leaveRequest.getUser().getId().equals(currentUser.getId())) {
+                !leaveRequest.getUser().getId().equals(currentUser.getId())) {
             throw new SecurityException("You can only view your own leave request approvals");
         }
 
-        // Query actual approval history from leave_approvals table
         List<LeaveApproval> approvals = leaveApprovalRepository.findByRequestId(requestId);
 
         List<LeaveApprovalDto> approvalDtos = approvals.stream()
@@ -588,7 +701,9 @@ public class LeaveRequestsController {
         dto.setRequestId(approval.getRequest().getId().intValue());
         dto.setApproverId(approval.getApprover().getId().intValue());
         dto.setApproverName(approval.getApprover().getName());
-        dto.setActingAsDelegateFor(null); // Temporarily null pending database migration
+        // Resolve approver avatar URL
+        dto.setApproverAvatarUrl(attachmentService.resolveAvatarUrl(approval.getApprover().getId()));
+        dto.setActingAsDelegateFor(null);
         dto.setLevel(approval.getLevel().intValue());
         dto.setDecision(approval.getDecision().name());
         dto.setDecidedAt(approval.getDecidedAt());
@@ -598,210 +713,356 @@ public class LeaveRequestsController {
 
     @GetMapping("/{requestId}/comments")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
     public ResponseEntity<List<CommentDto>> getComments(
             @PathVariable Long requestId,
             Authentication authentication) {
-        
+
         LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
                 .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
 
-        // Check access permissions
         String email = authentication.getName();
         User currentUser = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
 
-        if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") && 
-            !leaveRequest.getUser().getId().equals(currentUser.getId())) {
+        if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") &&
+                !leaveRequest.getUser().getId().equals(currentUser.getId())) {
             throw new SecurityException("You can only view your own leave request comments");
         }
 
-        // Return comments from in-memory storage
         List<CommentDto> comments = commentStorage.getOrDefault(requestId, new ArrayList<>());
-        
+
         return ResponseEntity.ok(comments);
     }
 
     @PostMapping("/{requestId}/comments")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
     public ResponseEntity<CommentDto> addComment(
             @PathVariable Long requestId,
-            @RequestBody CommentRequest commentRequest,
+            @Valid @RequestBody CommentRequest commentRequest,
             Authentication authentication) {
-        
-        LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
-                .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
-
-        // Check access permissions
-        String email = authentication.getName();
-        User currentUser = userRepository.findByEmailIgnoreCase(email)
-                .orElseThrow(() -> new ResourceNotFoundException("User", email));
-
-        if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") && 
-            !leaveRequest.getUser().getId().equals(currentUser.getId())) {
-            throw new SecurityException("You can only comment on your own leave requests");
-        }
-
-        // Create and store comment
-        CommentDto comment = new CommentDto();
-        comment.setId(commentStorage.getOrDefault(requestId, new ArrayList<>()).size() + 1);
-        comment.setRequestId(requestId);
-        comment.setAuthorId(currentUser.getId());
-        comment.setAuthorName(currentUser.getName());
-        comment.setMessage(commentRequest.getMessage());
-        comment.setCreatedAt(LocalDateTime.now());
-
-        // Store in in-memory storage
-        commentStorage.computeIfAbsent(requestId, k -> new ArrayList<>()).add(comment);
-
-        return ResponseEntity.status(201).body(comment);
-    }
-
-    @GetMapping("/{requestId}/attachments")
-    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
-    public ResponseEntity<List<AttachmentDto>> getAttachments(
-            @PathVariable Long requestId,
-            Authentication authentication) {
-        
-        LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
-                .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
-
-        // Check access permissions
-        String email = authentication.getName();
-        User currentUser = userRepository.findByEmailIgnoreCase(email)
-                .orElseThrow(() -> new ResourceNotFoundException("User", email));
-
-        if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") && 
-            !leaveRequest.getUser().getId().equals(currentUser.getId())) {
-            throw new SecurityException("You can only view your own leave request attachments");
-        }
-
-        // Simplified implementation - would query actual attachments
-        List<AttachmentDto> attachments = List.of();
-
-        return ResponseEntity.ok(attachments);
-    }
-
-    @PostMapping("/{requestId}/attachments")
-    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
-    public ResponseEntity<AttachmentDto> uploadAttachment(
-            @PathVariable Long requestId,
-            @RequestParam("file") org.springframework.web.multipart.MultipartFile file,
-            Authentication authentication) {
-        
-        // Check file size (10 MB limit as per OpenAPI spec)
-        long maxSize = 10 * 1024 * 1024; // 10 MB in bytes
-        if (file.getSize() > maxSize) {
-            throw new BusinessRuleException("File size exceeds the 10 MB limit");
-        }
 
         LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
                 .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
 
-        // Check access permissions
         String email = authentication.getName();
         User currentUser = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", email));
 
-        if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") && 
-            !leaveRequest.getUser().getId().equals(currentUser.getId())) {
-            throw new SecurityException("You can only upload attachments to your own leave requests");
+        if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") &&
+                !leaveRequest.getUser().getId().equals(currentUser.getId())) {
+            throw new SecurityException("You can only add comments to your own leave requests");
         }
 
-        // Simplified implementation - would upload to storage service
-        AttachmentDto attachment = new AttachmentDto();
-        attachment.setId((int) System.currentTimeMillis());
-        attachment.setFileName(file.getOriginalFilename());
-        attachment.setContentType(file.getContentType());
-        attachment.setSizeBytes(file.getSize());
-        attachment.setUploadedBy(currentUser.getId());
-        attachment.setUploadedAt(LocalDateTime.now());
-        attachment.setDownloadUrl("/uploads/attachments/" + requestId + "/" + file.getOriginalFilename());
+        List<CommentDto> comments = commentStorage.computeIfAbsent(requestId, k -> new ArrayList<>());
 
-        return ResponseEntity.status(201).body(attachment);
+        CommentDto newComment = new CommentDto();
+        newComment.setId(comments.size() + 1);
+        newComment.setRequestId(requestId);
+        newComment.setAuthorId(currentUser.getId());
+        newComment.setAuthorName(currentUser.getName());
+        newComment.setMessage(commentRequest.getMessage());
+        newComment.setCreatedAt(LocalDateTime.now());
+
+        comments.add(newComment);
+
+        return ResponseEntity.status(201).body(newComment);
     }
 
-    @GetMapping("/{requestId}/pdf")
-    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
-    public ResponseEntity<?> downloadRequestPdf(
-            @PathVariable Long requestId,
-            Authentication authentication) {
+    /**
+     * Helper method to validate continuous leave duration against policy limits
+     */
+    private void validateConsecutiveDays(User user, LeaveCategory category, BigDecimal totalDays) {
+        Integer deptId = user.getDepartment() != null ? user.getDepartment().getId() : null;
+
+        List<LeavePolicy> policies;
+        if (deptId != null) {
+            policies = leavePolicyRepository.findByCategoryId(category.getId()).stream()
+                    .filter(p -> p.getDepartment() != null && p.getDepartment().getId().equals(deptId))
+                    .collect(Collectors.toList());
+        } else {
+            policies = leavePolicyRepository.findByCategoryIdAndDepartmentIdIsNull(category.getId());
+        }
+
+        if (!policies.isEmpty()) {
+            LeavePolicy policy = policies.get(0);
+            if (policy.getMaxConsecutiveDays() != null && policy.getMaxConsecutiveDays() > 0) {
+                BigDecimal maxLimit = BigDecimal.valueOf(policy.getMaxConsecutiveDays());
+                if (totalDays.compareTo(maxLimit) > 0) {
+                    throw new ConflictException("Selected duration (" + totalDays + " days) exceeds the maximum allowed continuous limit of " + maxLimit + " days for " + category.getName());
+                }
+            }
+        }
+    }
+
+    /**
+     * Helper method to validate comp-off date conflicts
+     * Note: This validation is disabled in the new comp-off workflow.
+     * Employees can now apply for regular leave even if they have comp-off grants.
+     * They should use the comp-off category to claim against their grants.
+     */
+    private void validateCompOffDateConflict(User user, LocalDate startDate, LocalDate endDate) {
+        // No-op in the new workflow - employees can have both regular leave and comp-off grants
+    }
+
+    private void validateCompOffGrantExists(User user, Integer compOffRequestId, Integer categoryId, LocalDate endDate) {
+        // Find the comp-off grant
+        CompOffRequest compOffRequest = compOffRequestRepository.findById(compOffRequestId.longValue())
+                .orElseThrow(() -> new ResourceNotFoundException("CompOffRequest", compOffRequestId));
+
+        // Verify the grant belongs to the authenticated employee
+        if (!compOffRequest.getUser().getId().equals(user.getId())) {
+            throw new SecurityException("You can only claim against your own comp-off grants");
+        }
+
+        // Verify the grant is in APPROVED status
+        if (compOffRequest.getStatus() != CompOffRequest.RequestStatus.APPROVED) {
+            throw new ConflictException("Cannot claim against a comp-off grant that is not APPROVED");
+        }
+
+        // Verify the leave category is the Comp Off category
+        if (!isCompOffCategory(categoryId)) {
+            throw new ConflictException("compOffRequestId can only be used with the Comp Off leave category");
+        }
+
+        // Verify endDate is on or before the grant's expiry date
+        if (endDate.isAfter(compOffRequest.getExpiryDate())) {
+            throw new ConflictException("Leave request end date cannot be after the comp-off grant's expiry date");
+        }
+    }
+
+    private void validateCompOffBalance(LeaveRequest leaveRequest) {
+        if (leaveRequest.getCompOffRequest() == null) {
+            return; // Not a comp-off claim, skip validation
+        }
+
+        CompOffRequest compOffRequest = leaveRequest.getCompOffRequest();
+
+        // Calculate days remaining (excluding this current request)
+        Double daysClaimed = leaveRequestRepository.sumDaysClaimedByCompOffRequestId(compOffRequest.getId());
+        Double daysPending = leaveRequestRepository.sumDaysPendingByCompOffRequestId(compOffRequest.getId());
         
-        LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
-                .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
-
-        // Check access permissions
-        String email = authentication.getName();
-        User currentUser = userRepository.findByEmailIgnoreCase(email)
-                .orElseThrow(() -> new ResourceNotFoundException("User", email));
-
-        if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") && 
-            !leaveRequest.getUser().getId().equals(currentUser.getId())) {
-            throw new SecurityException("You can only download your own leave request PDFs");
+        // Subtract this request's days from pending if it's already counted
+        double currentRequestDays = leaveRequest.getTotalDays().doubleValue();
+        if (leaveRequest.getStatus() == LeaveRequest.RequestStatus.PENDING_L1 || 
+            leaveRequest.getStatus() == LeaveRequest.RequestStatus.PENDING_L2) {
+            daysPending = (daysPending != null ? daysPending : 0.0) - currentRequestDays;
         }
-
-        // Simplified implementation - would generate actual PDF
-        // In real implementation, return PDF file stream
-        return ResponseEntity.ok().build();
-    }
-
-    @GetMapping("/{requestId}/attachments/{attachmentId}")
-    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
-    public ResponseEntity<?> downloadAttachment(
-            @PathVariable Long requestId,
-            @PathVariable Long attachmentId,
-            Authentication authentication) {
         
-        LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
-                .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
+        double totalClaimed = (daysClaimed != null ? daysClaimed : 0.0) + (daysPending > 0 ? daysPending : 0.0);
+        double daysRemaining = compOffRequest.getDaysCredited().doubleValue() - totalClaimed;
 
-        // Check access permissions
-        String email = authentication.getName();
-        User currentUser = userRepository.findByEmailIgnoreCase(email)
-                .orElseThrow(() -> new ResourceNotFoundException("User", email));
-
-        if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") && 
-            !leaveRequest.getUser().getId().equals(currentUser.getId())) {
-            throw new SecurityException("You can only download your own leave request attachments");
+        // Check if requested days exceed remaining balance
+        if (currentRequestDays > daysRemaining) {
+            throw new ConflictException("INSUFFICIENT_COMP_OFF_BALANCE");
         }
-
-        // Simplified implementation - would return actual file stream
-        // In real implementation, return file content with proper headers
-        return ResponseEntity.ok().build();
     }
 
-    @GetMapping("/export")
-    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
-    public ResponseEntity<?> exportLeaveRequests(
-            @RequestParam(required = false) String status,
-            @RequestParam(required = false) Integer categoryId,
-            @RequestParam(required = false) String fromDate,
-            @RequestParam(required = false) String toDate,
-            @RequestParam(defaultValue = "csv") String format,
-            Authentication authentication) {
+    private boolean isCompOffCategory(Integer categoryId) {
+        // Check if the category is the Comp Off category by name or code
+        LeaveCategory category = leaveCategoryRepository.findById(categoryId)
+                .orElseThrow(() -> new ResourceNotFoundException("LeaveCategory", categoryId));
+        
+        return "COMP_OFF".equalsIgnoreCase(category.getCategoryCode()) ||
+               "Compensatory Off".equalsIgnoreCase(category.getCategoryName()) ||
+               "Comp Off".equalsIgnoreCase(category.getCategoryName()) ||
+               "Comp-Off".equalsIgnoreCase(category.getCategoryName());
+    }
 
-        // Simplified implementation - would generate actual export file
-        // In real implementation, return CSV/XLSX file stream
-        return ResponseEntity.ok().build();
+    private void createNotification(User user, String type, String title, String message, String entityType, Long entityId) {
+        try {
+
+            // Create notification for IN_APP channel
+            NotificationQueue inAppNotification = new NotificationQueue();
+            inAppNotification.setUser(user);
+            inAppNotification.setChannel(NotificationQueue.Channel.IN_APP);
+            inAppNotification.setTemplateCode(type);
+            inAppNotification.setPayload("{\"title\":\"" + title + "\",\"message\":\"" + message + "\"}");
+            inAppNotification.setRelatedEntityType(entityType);
+            inAppNotification.setRelatedEntityId(entityId);
+            inAppNotification.setStatus(NotificationQueue.NotificationStatus.QUEUED);
+            inAppNotification.setCreatedAt(LocalDateTime.now());
+            inAppNotification.setScheduledAt(LocalDateTime.now());
+            inAppNotification.setIsRead(false);
+            notificationQueueRepository.save(inAppNotification);
+
+            // Create notification for EMAIL channel
+            NotificationQueue emailNotification = new NotificationQueue();
+            emailNotification.setUser(user);
+            emailNotification.setChannel(NotificationQueue.Channel.EMAIL);
+            emailNotification.setTemplateCode(type);
+            emailNotification.setPayload("{\"title\":\"" + title + "\",\"message\":\"" + message + "\"}");
+            emailNotification.setRelatedEntityType(entityType);
+            emailNotification.setRelatedEntityId(entityId);
+            emailNotification.setStatus(NotificationQueue.NotificationStatus.QUEUED);
+            emailNotification.setCreatedAt(LocalDateTime.now());
+            emailNotification.setScheduledAt(LocalDateTime.now());
+            notificationQueueRepository.save(emailNotification);
+
+        } catch (Exception e) {
+            // Log error but don't fail the main operation
+            e.printStackTrace();
+        }
     }
 
     private LeaveRequestDto toLeaveRequestDto(LeaveRequest request) {
         LeaveRequestDto dto = new LeaveRequestDto();
         dto.setId(request.getId());
-        dto.setUserId(request.getUser().getId());
-        dto.setUserName(request.getUser().getName());
-        dto.setCategoryId(request.getCategory().getId());
-        dto.setCategoryName(request.getCategory().getName());
+        if (request.getUser() != null) {
+            dto.setUserId(request.getUser().getId());
+            dto.setUserName(request.getUser().getName());
+            // Resolve user avatar URL
+            dto.setUserAvatarUrl(attachmentService.resolveAvatarUrl(request.getUser().getId()));
+        }
+        if (request.getCategory() != null) {
+            dto.setCategoryId(request.getCategory().getId());
+            dto.setCategoryName(request.getCategory().getName());
+        }
         dto.setStartDate(request.getStartDate());
         dto.setEndDate(request.getEndDate());
-        dto.setSessionType(request.getSessionType().name());
+        dto.setSessionType(request.getSessionType() != null ? request.getSessionType().name() : null);
         dto.setTotalDays(request.getTotalDays());
+        dto.setLopDays(request.getLopDays());
         dto.setReason(request.getReason());
-        dto.setStatus(request.getStatus().name());
+        dto.setStatus(request.getStatus() != null ? request.getStatus().name() : null);
         if (request.getCurrentApprover() != null) {
             dto.setCurrentApproverId(request.getCurrentApprover().getId());
             dto.setCurrentApproverName(request.getCurrentApprover().getName());
+            // Resolve current approver avatar URL
+            dto.setCurrentApproverAvatarUrl(attachmentService.resolveAvatarUrl(request.getCurrentApprover().getId()));
         }
         dto.setAppliedAt(request.getAppliedAt());
         return dto;
+    }
+
+    // ============================================================
+    // ATTACHMENT ENDPOINTS
+    // ============================================================
+
+    @GetMapping("/{requestId}/attachments")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
+    public ResponseEntity<List<AttachmentDto>> getAttachments(
+            @PathVariable Long requestId,
+            Authentication authentication) {
+
+        LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
+                .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
+
+        // Check access permissions
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") &&
+                !leaveRequest.getUser().getId().equals(currentUser.getId())) {
+            throw new SecurityException("You can only view attachments for your own leave requests");
+        }
+
+        // For managers, verify they are the current approver (or delegated approver)
+        if (currentUser.getRole().getRoleCode().equals("MANAGER")) {
+            if (leaveRequest.getCurrentApprover() == null ||
+                    !leaveRequest.getCurrentApprover().getId().equals(currentUser.getId())) {
+                throw new SecurityException("You can only view attachments for requests where you are the current approver");
+            }
+        }
+
+        List<AttachmentDto> attachments = attachmentService.listAttachments(
+                com.lms.Leave_Management_System_Backend.model.Attachment.EntityType.LEAVE_REQUEST,
+                requestId
+        );
+
+        return ResponseEntity.ok(attachments);
+    }
+
+    @PostMapping("/{requestId}/attachments/init-upload")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
+    public ResponseEntity<ApiResponse<AttachmentInitUploadResponse>> initAttachmentUpload(
+            @PathVariable Long requestId,
+            @Valid @RequestBody AttachmentInitUploadRequest request,
+            Authentication authentication) {
+
+        LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
+                .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
+
+        // Check access permissions - only the request owner can upload
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        if (!leaveRequest.getUser().getId().equals(currentUser.getId())) {
+            throw new SecurityException("You can only upload attachments to your own leave requests");
+        }
+
+        AttachmentInitUploadResponse response = attachmentService.initializeUpload(
+                com.lms.Leave_Management_System_Backend.model.Attachment.EntityType.LEAVE_REQUEST,
+                requestId,
+                request,
+                currentUser.getId()
+        );
+
+        return ResponseEntity.status(201).body(new ApiResponse<>(true, response));
+    }
+
+    @PostMapping("/{requestId}/attachments/{attachmentId}/confirm")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
+    public ResponseEntity<ApiResponse<AttachmentDto>> confirmAttachmentUpload(
+            @PathVariable Long requestId,
+            @PathVariable Long attachmentId,
+            @RequestBody(required = false) AttachmentConfirmRequest confirmRequest,
+            Authentication authentication) {
+
+        LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
+                .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
+
+        // Check access permissions - only the request owner can confirm
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        if (!leaveRequest.getUser().getId().equals(currentUser.getId())) {
+            throw new SecurityException("You can only confirm attachments for your own leave requests");
+        }
+
+        AttachmentDto attachment = attachmentService.confirmUpload(attachmentId, confirmRequest);
+
+        return ResponseEntity.ok(new ApiResponse<>(true, attachment));
+    }
+
+    @GetMapping("/{requestId}/attachments/{attachmentId}")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    @Transactional
+    public ResponseEntity<ApiResponse<AttachmentDto>> getAttachment(
+            @PathVariable Long requestId,
+            @PathVariable Long attachmentId,
+            Authentication authentication) {
+
+        LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
+                .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
+
+        // Check access permissions
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        if (currentUser.getRole().getRoleCode().equals("EMPLOYEE") &&
+                !leaveRequest.getUser().getId().equals(currentUser.getId())) {
+            throw new SecurityException("You can only view attachments for your own leave requests");
+        }
+
+        // For managers, verify they are the current approver (or delegated approver)
+        if (currentUser.getRole().getRoleCode().equals("MANAGER")) {
+            if (leaveRequest.getCurrentApprover() == null ||
+                    !leaveRequest.getCurrentApprover().getId().equals(currentUser.getId())) {
+                throw new SecurityException("You can only view attachments for requests where you are the current approver");
+            }
+        }
+
+        AttachmentDto attachment = attachmentService.getAttachment(attachmentId);
+
+        return ResponseEntity.ok(new ApiResponse<>(true, attachment));
     }
 }

@@ -9,6 +9,7 @@ import com.lms.Leave_Management_System_Backend.model.User;
 import com.lms.Leave_Management_System_Backend.repository.DepartmentRepository;
 import com.lms.Leave_Management_System_Backend.repository.RoleRepository;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
+import com.lms.Leave_Management_System_Backend.service.AttachmentService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -32,6 +33,7 @@ public class AuthService {
     private final RoleRepository roleRepository;
     private final BCryptPasswordEncoder passwordEncoder;
     private final RedisTemplate<String, String> otpRedisTemplate;
+    private final AttachmentService attachmentService;
 
     private final Random random = new Random();
 
@@ -40,13 +42,15 @@ public class AuthService {
             UserRepository userRepository,
             DepartmentRepository departmentRepository,
             RoleRepository roleRepository,
-            @Qualifier("otpRedisTemplate") RedisTemplate<String, String> otpRedisTemplate) {
+            @Qualifier("otpRedisTemplate") RedisTemplate<String, String> otpRedisTemplate,
+            AttachmentService attachmentService) {
 
         this.emailService = emailService;
         this.userRepository = userRepository;
         this.departmentRepository = departmentRepository;
         this.roleRepository = roleRepository;
         this.otpRedisTemplate = otpRedisTemplate;
+        this.attachmentService = attachmentService;
         this.passwordEncoder = new BCryptPasswordEncoder();
     }
 
@@ -315,6 +319,14 @@ public class AuthService {
         }
         userDto.setDateOfJoining(user.getDateOfJoining());
         userDto.setEmploymentStatus(user.getEmploymentStatus().name());
+        
+        // Use the centralized avatar resolver instead of direct avatarUrl
+        String resolvedAvatarUrl = attachmentService.resolveAvatarUrl(user.getId());
+        userDto.setAvatarUrl(resolvedAvatarUrl);
+        
+        // NOTE: avatarAttachmentId not in database - use avatarUrl directly
+        // Future migration will add avatar_attachment_id column
+        userDto.setAvatarAttachmentId(null);
 
         return userDto;
     }
