@@ -20,4 +20,6 @@ public interface LeaveCategoryRepository extends JpaRepository<LeaveCategory, In
     Optional<LeaveCategory> findById(Integer id);
 
     Optional<LeaveCategory> findByCategoryCode(String categoryCode);
+
+    boolean existsByCategoryNameIgnoreCase(String categoryName);
 }
