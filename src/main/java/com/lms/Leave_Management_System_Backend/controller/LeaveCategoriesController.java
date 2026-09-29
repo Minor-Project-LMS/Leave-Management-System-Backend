@@ -1,6 +1,7 @@
 package com.lms.Leave_Management_System_Backend.controller;
 
 import com.lms.Leave_Management_System_Backend.dto.*;
+import com.lms.Leave_Management_System_Backend.exception.ConflictException;
 import com.lms.Leave_Management_System_Backend.exception.ResourceNotFoundException;
 import com.lms.Leave_Management_System_Backend.model.LeaveCategory;
 import com.lms.Leave_Management_System_Backend.repository.LeaveCategoryRepository;
@@ -76,8 +77,19 @@ public class LeaveCategoriesController {
     public ResponseEntity<LeaveCategoryDto> createLeaveCategory(
             @Valid @RequestBody LeaveCategoryRequest request) {
 
+        // Leave type names are unique (category_name has a unique constraint),
+        // so HR adding a custom leave type that already exists needs a clear
+        // message rather than surfacing as a generic 500 from the database.
+        String name = request.getName() == null ? "" : request.getName().trim();
+        if (name.isEmpty()) {
+            throw new IllegalArgumentException("Leave type name is required.");
+        }
+        if (leaveCategoryRepository.existsByCategoryNameIgnoreCase(name)) {
+            throw new ConflictException("A leave type named '" + name + "' already exists.");
+        }
+
         LeaveCategory category = new LeaveCategory();
-        category.setName(request.getName());
+        category.setName(name);
         category.setPaid(request.getPaid() != null ? request.getPaid() : true);
         category.setRequiresDocument(request.getRequiresDocument() != null ? request.getRequiresDocument() : false);
         category.setDefaultAnnualQuota(request.getDefaultAnnualQuota() != null ? request.getDefaultAnnualQuota() : 0.0);
