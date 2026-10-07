@@ -49,6 +49,42 @@ public class UsersController {
         this.userNotificationPreferenceRepository = userNotificationPreferenceRepository;
     }
 
+    // Minimal colleague picker — any signed-in user can search active
+    // colleagues by name (excluding themselves), e.g. to pick a leave
+    // donation recipient. Deliberately returns only id/name/code/department,
+    // not the fuller employee record that GET /employees (HR_ADMIN only)
+    // exposes.
+    @GetMapping("/directory")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    public ResponseEntity<java.util.List<UserDirectoryEntryDto>> getUserDirectory(
+            @RequestParam(required = false) String q,
+            Authentication authentication) {
+
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        java.util.List<User> active = userRepository.findByEmploymentStatus(User.EmploymentStatus.ACTIVE);
+
+        String query = q == null ? "" : q.trim().toLowerCase();
+
+        java.util.List<UserDirectoryEntryDto> results = active.stream()
+                .filter(u -> !u.getId().equals(currentUser.getId()))
+                .filter(u -> query.isEmpty() || (u.getFullName() != null && u.getFullName().toLowerCase().contains(query)))
+                .sorted(java.util.Comparator.comparing(User::getFullName, java.util.Comparator.nullsLast(String::compareTo)))
+                .map(u -> {
+                    UserDirectoryEntryDto dto = new UserDirectoryEntryDto();
+                    dto.setId(u.getId());
+                    dto.setFullName(u.getFullName());
+                    dto.setEmployeeCode(u.getEmployeeCode());
+                    dto.setDepartmentName(u.getDepartment() != null ? u.getDepartment().getDepartmentName() : null);
+                    return dto;
+                })
+                .collect(java.util.stream.Collectors.toList());
+
+        return ResponseEntity.ok(results);
+    }
+
     @GetMapping("/me")
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
     public ResponseEntity<ApiResponse<UserDto>> getMyProfile(Authentication authentication) {

@@ -68,9 +68,18 @@ public class ApprovalsController {
                 .map(LeaveRequest::getId)
                 .collect(Collectors.toList());
 
-        // Combine both sets - all requests the manager should see
+        // Requests that escalated away from this user — they're no longer
+        // the current approver and never made a decision, so without this
+        // they'd vanish from this screen entirely the moment it reassigns.
+        List<LeaveRequest> escalatedAwayRequests = leaveRequestRepository.findByOriginalApproverId(currentUser.getId());
+        List<Long> escalatedAwayRequestIds = escalatedAwayRequests.stream()
+                .map(LeaveRequest::getId)
+                .collect(Collectors.toList());
+
+        // Combine all sets - all requests the manager should see
         List<Long> allAccessibleRequestIds = requestIdsWithUserAction;
         allAccessibleRequestIds.addAll(currentApproverRequestIds);
+        allAccessibleRequestIds.addAll(escalatedAwayRequestIds);
         allAccessibleRequestIds = allAccessibleRequestIds.stream().distinct().collect(Collectors.toList());
 
         // Get all accessible requests using custom query with entity graph
@@ -88,6 +97,8 @@ public class ApprovalsController {
                         return lr.getStatus() == LeaveRequest.RequestStatus.APPROVED;
                     } else if (status.equals("REJECTED")) {
                         return lr.getStatus() == LeaveRequest.RequestStatus.REJECTED;
+                    } else if (status.equals("ESCALATED")) {
+                        return lr.isEscalated();
                     }
                     return false;
                 })
@@ -131,8 +142,12 @@ public class ApprovalsController {
                 .filter(lr -> lr.getStatus() == LeaveRequest.RequestStatus.REJECTED)
                 .count();
 
+        long escalatedCount = allAccessibleRequests.stream()
+                .filter(LeaveRequest::isEscalated)
+                .count();
+
         ApprovalInboxResponse.ApprovalCounts counts = new ApprovalInboxResponse.ApprovalCounts(
-                (int) allCount, (int) pendingCount, (int) approvedCount, (int) rejectedCount
+                (int) allCount, (int) pendingCount, (int) approvedCount, (int) rejectedCount, (int) escalatedCount
         );
 
         int totalPages = (int) Math.ceil((double) filteredRequests.size() / limit);
@@ -168,6 +183,9 @@ public class ApprovalsController {
             dto.setCurrentApproverName(request.getCurrentApprover().getName());
         }
         dto.setAppliedAt(request.getAppliedAt());
+        dto.setEscalated(request.isEscalated());
+        dto.setEscalatedAt(request.getEscalatedAt());
+        dto.setOriginalApproverName(request.getOriginalApprover() != null ? request.getOriginalApprover().getName() : null);
         return dto;
     }
 }

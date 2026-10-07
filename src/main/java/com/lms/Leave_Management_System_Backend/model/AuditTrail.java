@@ -44,7 +44,7 @@ public class AuditTrail {
     private String ipAddress;
 
     public enum AuditAction {
-        CREATE, APPROVE, REJECT, CANCEL, DELEGATE, UPDATE
+        CREATE, APPROVE, REJECT, CANCEL, DELEGATE, UPDATE, ESCALATE
     }
 
     public AuditTrail() {

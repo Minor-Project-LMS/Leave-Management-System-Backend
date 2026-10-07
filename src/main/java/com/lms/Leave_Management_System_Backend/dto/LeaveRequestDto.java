@@ -3,6 +3,7 @@ package com.lms.Leave_Management_System_Backend.dto;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 
 public class LeaveRequestDto {
     private Long id;
@@ -15,6 +16,13 @@ public class LeaveRequestDto {
     private String sessionType;
     private BigDecimal totalDays;
     private BigDecimal lopDays;
+    // Self-checklist the applicant adds when applying — visible to both the
+    // employee (who checks items off) and the manager (read-only, informs
+    // their approval decision but never blocks it).
+    private List<HandoverTaskDto> handoverTasks;
+    private boolean escalated;
+    private LocalDateTime escalatedAt;
+    private String originalApproverName;
     private String reason;
     private String status;
     private Long currentApproverId;
@@ -169,5 +177,37 @@ public class LeaveRequestDto {
 
     public void setAppliedAt(LocalDateTime appliedAt) {
         this.appliedAt = appliedAt;
+    }
+
+    public List<HandoverTaskDto> getHandoverTasks() {
+        return handoverTasks;
+    }
+
+    public void setHandoverTasks(List<HandoverTaskDto> handoverTasks) {
+        this.handoverTasks = handoverTasks;
+    }
+
+    public boolean isEscalated() {
+        return escalated;
+    }
+
+    public void setEscalated(boolean escalated) {
+        this.escalated = escalated;
+    }
+
+    public LocalDateTime getEscalatedAt() {
+        return escalatedAt;
+    }
+
+    public void setEscalatedAt(LocalDateTime escalatedAt) {
+        this.escalatedAt = escalatedAt;
+    }
+
+    public String getOriginalApproverName() {
+        return originalApproverName;
+    }
+
+    public void setOriginalApproverName(String originalApproverName) {
+        this.originalApproverName = originalApproverName;
     }
 }

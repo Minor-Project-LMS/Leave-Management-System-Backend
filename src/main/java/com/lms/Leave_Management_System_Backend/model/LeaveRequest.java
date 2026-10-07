@@ -76,6 +76,21 @@ public class LeaveRequest {
     @Column(name = "applied_at")
     private LocalDateTime appliedAt;
 
+    // Approval SLA escalation (see LeaveEscalationService): if this sits
+    // pending too long, it gets auto-reassigned to HR and these fields
+    // record that it happened, so the manager, HR, and the employee can
+    // all see it wasn't a normal approval routing — the original approver
+    // just didn't act in time.
+    @Column(name = "escalated", nullable = false)
+    private boolean escalated = false;
+
+    @Column(name = "escalated_at")
+    private LocalDateTime escalatedAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "original_approver_id")
+    private User originalApprover;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "comp_off_request_id")
     private CompOffRequest compOffRequest;
@@ -217,6 +232,30 @@ public class LeaveRequest {
 
     public void setAppliedAt(LocalDateTime appliedAt) {
         this.appliedAt = appliedAt;
+    }
+
+    public boolean isEscalated() {
+        return escalated;
+    }
+
+    public void setEscalated(boolean escalated) {
+        this.escalated = escalated;
+    }
+
+    public LocalDateTime getEscalatedAt() {
+        return escalatedAt;
+    }
+
+    public void setEscalatedAt(LocalDateTime escalatedAt) {
+        this.escalatedAt = escalatedAt;
+    }
+
+    public User getOriginalApprover() {
+        return originalApprover;
+    }
+
+    public void setOriginalApprover(User originalApprover) {
+        this.originalApprover = originalApprover;
     }
 
     public CompOffRequest getCompOffRequest() {

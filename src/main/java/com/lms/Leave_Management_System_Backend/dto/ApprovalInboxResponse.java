@@ -75,15 +75,26 @@ public class ApprovalInboxResponse {
         private int pending;
         private int approved;
         private int rejected;
+        private int escalated;
 
         public ApprovalCounts() {
         }
 
+        // Kept for any other caller still using the original 4-arg form —
+        // escalated just defaults to 0 for them.
         public ApprovalCounts(int all, int pending, int approved, int rejected) {
             this.all = all;
             this.pending = pending;
             this.approved = approved;
             this.rejected = rejected;
+        }
+
+        public ApprovalCounts(int all, int pending, int approved, int rejected, int escalated) {
+            this.all = all;
+            this.pending = pending;
+            this.approved = approved;
+            this.rejected = rejected;
+            this.escalated = escalated;
         }
 
         public int getAll() {
@@ -116,6 +127,14 @@ public class ApprovalInboxResponse {
 
         public void setRejected(int rejected) {
             this.rejected = rejected;
+        }
+
+        public int getEscalated() {
+            return escalated;
+        }
+
+        public void setEscalated(int escalated) {
+            this.escalated = escalated;
         }
     }
 }

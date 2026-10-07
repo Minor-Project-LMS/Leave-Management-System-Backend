@@ -43,6 +43,8 @@ public class LeaveRequestsController {
     private final com.lms.Leave_Management_System_Backend.service.AttachmentService attachmentService;
     private final com.lms.Leave_Management_System_Backend.service.LeaveLedgerProvisioningService leaveLedgerProvisioningService;
     private final com.lms.Leave_Management_System_Backend.repository.CompOffRequestRepository compOffRequestRepository;
+    private final com.lms.Leave_Management_System_Backend.repository.HandoverTaskRepository handoverTaskRepository;
+    private final com.lms.Leave_Management_System_Backend.service.WorkWeekService workWeekService;
 
     // In-memory comment storage
     private static final Map<Long, List<CommentDto>> commentStorage = new ConcurrentHashMap<>();
@@ -58,7 +60,9 @@ public class LeaveRequestsController {
             LeavePolicyRepository leavePolicyRepository,
             AttachmentService attachmentService,
             LeaveLedgerProvisioningService leaveLedgerProvisioningService,
-            com.lms.Leave_Management_System_Backend.repository.CompOffRequestRepository compOffRequestRepository) {
+            com.lms.Leave_Management_System_Backend.repository.CompOffRequestRepository compOffRequestRepository,
+            com.lms.Leave_Management_System_Backend.service.WorkWeekService workWeekService,
+            com.lms.Leave_Management_System_Backend.repository.HandoverTaskRepository handoverTaskRepository) {
         this.leaveRequestRepository = leaveRequestRepository;
         this.userRepository = userRepository;
         this.leaveCategoryRepository = leaveCategoryRepository;
@@ -70,6 +74,8 @@ public class LeaveRequestsController {
         this.attachmentService = attachmentService;
         this.leaveLedgerProvisioningService = leaveLedgerProvisioningService;
         this.compOffRequestRepository = compOffRequestRepository;
+        this.workWeekService = workWeekService;
+        this.handoverTaskRepository = handoverTaskRepository;
     }
 
     @PostMapping
@@ -121,6 +127,9 @@ public class LeaveRequestsController {
         }
         leaveRequest.setHandoverNotes(request.getHandoverNotes());
 
+        // Handover checklist is saved once the request itself has an id —
+        // done further down, right after leaveRequestRepository.save(...).
+
         // Set status based on request or default to PENDING_L1
         if (request.getStatus() != null && "DRAFT".equals(request.getStatus())) {
             leaveRequest.setStatus(LeaveRequest.RequestStatus.DRAFT);
@@ -153,6 +162,26 @@ public class LeaveRequestsController {
         leaveRequest.setAppliedAt(LocalDateTime.now());
 
         LeaveRequest saved = leaveRequestRepository.save(leaveRequest);
+
+        if (request.getHandoverTasks() != null) {
+            for (HandoverTaskInput taskInput : request.getHandoverTasks()) {
+                if (taskInput.getDescription() == null || taskInput.getDescription().trim().isEmpty()) {
+                    continue; // skip blank rows rather than rejecting the whole submission
+                }
+                com.lms.Leave_Management_System_Backend.model.HandoverTask task =
+                        new com.lms.Leave_Management_System_Backend.model.HandoverTask();
+                task.setLeaveRequest(saved);
+                task.setDescription(taskInput.getDescription().trim());
+                try {
+                    task.setUrgency(taskInput.getUrgency() != null
+                            ? com.lms.Leave_Management_System_Backend.model.HandoverTask.Urgency.valueOf(taskInput.getUrgency().toUpperCase())
+                            : com.lms.Leave_Management_System_Backend.model.HandoverTask.Urgency.MEDIUM);
+                } catch (IllegalArgumentException badUrgency) {
+                    task.setUrgency(com.lms.Leave_Management_System_Backend.model.HandoverTask.Urgency.MEDIUM);
+                }
+                handoverTaskRepository.save(task);
+            }
+        }
 
         // Send notification to employee
         createNotification(
@@ -191,14 +220,35 @@ public class LeaveRequestsController {
     // between two leave days, rather than being free days off in the
     // middle of a leave stretch. In practice, for a single continuous
     // date range this just means every calendar day in the range counts.
+    // Sandwich Leave policy, aware of the org's working-day configuration
+    // (see WorkWeekService — by default only Sunday is a non-working day,
+    // but HR can mark Saturday as a working day too for a 6-day work week).
+    //
+    // A working day always counts when it falls in the requested range,
+    // whether Saturday is one or not — the employee is genuinely absent
+    // from work that day. A non-working day (Sunday, or a non-working
+    // Saturday) counts too, but only when it's actually "sandwiched"
+    // between two other days in the range rather than sitting at the very
+    // start or end of it — e.g. Thu-Mon charges Sat+Sun as part of the
+    // continuous span, but a request that (unusually) starts or ends on a
+    // non-working day doesn't get charged for that boundary day, since
+    // there's nothing on that side to sandwich it against.
     private BigDecimal calculateTotalDays(LocalDate startDate, LocalDate endDate, String sessionType) {
-        long calendarDays = java.time.temporal.ChronoUnit.DAYS.between(startDate, endDate) + 1;
+        long chargeableDays = 0;
+        LocalDate current = startDate;
+        while (!current.isAfter(endDate)) {
+            boolean isBoundary = current.equals(startDate) || current.equals(endDate);
+            if (workWeekService.isWorkingDay(current) || !isBoundary) {
+                chargeableDays++;
+            }
+            current = current.plusDays(1);
+        }
 
         // Adjust for session type
         if ("FIRST_HALF".equals(sessionType) || "SECOND_HALF".equals(sessionType)) {
-            return BigDecimal.valueOf(calendarDays * 0.5);
+            return BigDecimal.valueOf(chargeableDays * 0.5);
         } else {
-            return BigDecimal.valueOf(calendarDays);
+            return BigDecimal.valueOf(chargeableDays);
         }
     }
 
@@ -842,14 +892,14 @@ public class LeaveRequestsController {
         // Calculate days remaining (excluding this current request)
         Double daysClaimed = leaveRequestRepository.sumDaysClaimedByCompOffRequestId(compOffRequest.getId());
         Double daysPending = leaveRequestRepository.sumDaysPendingByCompOffRequestId(compOffRequest.getId());
-        
+
         // Subtract this request's days from pending if it's already counted
         double currentRequestDays = leaveRequest.getTotalDays().doubleValue();
-        if (leaveRequest.getStatus() == LeaveRequest.RequestStatus.PENDING_L1 || 
-            leaveRequest.getStatus() == LeaveRequest.RequestStatus.PENDING_L2) {
+        if (leaveRequest.getStatus() == LeaveRequest.RequestStatus.PENDING_L1 ||
+                leaveRequest.getStatus() == LeaveRequest.RequestStatus.PENDING_L2) {
             daysPending = (daysPending != null ? daysPending : 0.0) - currentRequestDays;
         }
-        
+
         double totalClaimed = (daysClaimed != null ? daysClaimed : 0.0) + (daysPending > 0 ? daysPending : 0.0);
         double daysRemaining = compOffRequest.getDaysCredited().doubleValue() - totalClaimed;
 
@@ -863,11 +913,11 @@ public class LeaveRequestsController {
         // Check if the category is the Comp Off category by name or code
         LeaveCategory category = leaveCategoryRepository.findById(categoryId)
                 .orElseThrow(() -> new ResourceNotFoundException("LeaveCategory", categoryId));
-        
+
         return "COMP_OFF".equalsIgnoreCase(category.getCategoryCode()) ||
-               "Compensatory Off".equalsIgnoreCase(category.getCategoryName()) ||
-               "Comp Off".equalsIgnoreCase(category.getCategoryName()) ||
-               "Comp-Off".equalsIgnoreCase(category.getCategoryName());
+                "Compensatory Off".equalsIgnoreCase(category.getCategoryName()) ||
+                "Comp Off".equalsIgnoreCase(category.getCategoryName()) ||
+                "Comp-Off".equalsIgnoreCase(category.getCategoryName());
     }
 
     private void createNotification(User user, String type, String title, String message, String entityType, Long entityId) {
@@ -933,7 +983,61 @@ public class LeaveRequestsController {
             dto.setCurrentApproverAvatarUrl(attachmentService.resolveAvatarUrl(request.getCurrentApprover().getId()));
         }
         dto.setAppliedAt(request.getAppliedAt());
+
+        List<com.lms.Leave_Management_System_Backend.model.HandoverTask> tasks =
+                handoverTaskRepository.findByLeaveRequestIdOrderByIdAsc(request.getId());
+        dto.setHandoverTasks(tasks.stream().map(this::toHandoverTaskDto).collect(Collectors.toList()));
+
+        dto.setEscalated(request.isEscalated());
+        dto.setEscalatedAt(request.getEscalatedAt());
+        dto.setOriginalApproverName(request.getOriginalApprover() != null ? request.getOriginalApprover().getFullName() : null);
+
         return dto;
+    }
+
+    private HandoverTaskDto toHandoverTaskDto(com.lms.Leave_Management_System_Backend.model.HandoverTask task) {
+        HandoverTaskDto dto = new HandoverTaskDto();
+        dto.setId(task.getId());
+        dto.setDescription(task.getDescription());
+        dto.setUrgency(task.getUrgency().name());
+        dto.setCompleted(task.isCompleted());
+        return dto;
+    }
+
+    // Lets the applicant (only) check items off their own handover
+    // checklist, any time up to (or during) their leave — not the manager,
+    // and not anyone else. Works regardless of the request's status, so it
+    // still works for a request that's already been approved.
+    @PatchMapping("/{requestId}/handover-tasks/{taskId}")
+    @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
+    public ResponseEntity<HandoverTaskDto> updateHandoverTask(
+            @PathVariable Long requestId,
+            @PathVariable Long taskId,
+            @RequestBody HandoverTaskUpdateRequest updateRequest,
+            Authentication authentication) {
+
+        LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
+                .orElseThrow(() -> new ResourceNotFoundException("LeaveRequest", requestId));
+
+        String email = authentication.getName();
+        User currentUser = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", email));
+
+        if (!leaveRequest.getUser().getId().equals(currentUser.getId())) {
+            throw new SecurityException("Only the employee who applied for this leave can update their handover checklist.");
+        }
+
+        com.lms.Leave_Management_System_Backend.model.HandoverTask task = handoverTaskRepository.findById(taskId)
+                .orElseThrow(() -> new ResourceNotFoundException("HandoverTask", taskId));
+
+        if (!task.getLeaveRequest().getId().equals(requestId)) {
+            throw new ResourceNotFoundException("HandoverTask", taskId);
+        }
+
+        task.setCompleted(updateRequest.isCompleted());
+        handoverTaskRepository.save(task);
+
+        return ResponseEntity.ok(toHandoverTaskDto(task));
     }
 
     // ============================================================

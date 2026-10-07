@@ -5,9 +5,12 @@ import com.lms.Leave_Management_System_Backend.model.Department;
 import com.lms.Leave_Management_System_Backend.model.LeaveRequest;
 import com.lms.Leave_Management_System_Backend.model.User;
 import com.lms.Leave_Management_System_Backend.repository.DepartmentRepository;
+import com.lms.Leave_Management_System_Backend.repository.LeaveCategoryRepository;
+import com.lms.Leave_Management_System_Backend.repository.LeaveLedgerRepository;
 import com.lms.Leave_Management_System_Backend.repository.LeaveRequestRepository;
 import com.lms.Leave_Management_System_Backend.repository.UserRepository;
 import com.lms.Leave_Management_System_Backend.security.RequireRole;
+import com.lms.Leave_Management_System_Backend.service.ReportsAggregator;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -39,94 +42,117 @@ public class ReportsController {
     @Autowired
     private DepartmentRepository departmentRepository;
 
+    @Autowired
+    private LeaveCategoryRepository leaveCategoryRepository;
+
+    @Autowired
+    private LeaveLedgerRepository leaveLedgerRepository;
+
+    // The numbers on the HR Reports & Analytics page (and the department
+    // panels on the HR Dashboard and Employee Management pages) used to be
+    // hardcoded sample values here. They're now calculated from the real
+    // leave requests, users, categories and ledgers — the definitions live
+    // in ReportsAggregator, which is where they're tested.
+    //
+    // These are HR-only. Summary and leave-trend used to allow MANAGER too,
+    // but they return org-wide figures now, and only HR pages call them.
+    private ReportsAggregator aggregator() {
+        return new ReportsAggregator(
+                leaveRequestRepository.findAll(),
+                userRepository.findAll(),
+                departmentRepository.findAll(),
+                leaveCategoryRepository.findAll(),
+                leaveLedgerRepository.findAll(),
+                LocalDate.now());
+    }
+
+    private LocalDate parseDate(String value, String field) {
+        if (value == null || value.isBlank()) return null;
+        try {
+            return LocalDate.parse(value.trim());
+        } catch (java.time.format.DateTimeParseException ex) {
+            throw new IllegalArgumentException(field + " must be a date in YYYY-MM-DD format.");
+        }
+    }
+
     @GetMapping("/summary")
-    @RequireRole({"HR_ADMIN", "MANAGER"})
+    @RequireRole({"HR_ADMIN"})
+    @Transactional(readOnly = true)
     public ResponseEntity<ReportSummary> getReportSummary(
             @RequestParam(required = false) String dateFrom,
             @RequestParam(required = false) String dateTo,
             @RequestParam(required = false) Integer departmentId,
-            @RequestParam(required = false) Integer locationId,
             Authentication authentication) {
 
-        // Simplified implementation - would query actual report data
-        ReportSummary summary = new ReportSummary();
-        summary.setTotalLeavesTaken(125.5);
-        summary.setTotalEmployees(45);
-        summary.setAvgLeavePerEmployee(2.79);
-        summary.setApprovalRate(87.5);
-        summary.setPendingRequests(8);
-        summary.setInsights(List.of(
-                "Leave usage increased by 12% compared to last month",
-                "Engineering department has highest leave utilization",
-                "Sick leave claims have decreased in Q3"
-        ));
-
-        return ResponseEntity.ok(summary);
+        return ResponseEntity.ok(aggregator().summary(
+                parseDate(dateFrom, "dateFrom"), parseDate(dateTo, "dateTo"), departmentId));
     }
 
     @GetMapping("/leave-trend")
-    @RequireRole({"HR_ADMIN", "MANAGER"})
+    @RequireRole({"HR_ADMIN"})
+    @Transactional(readOnly = true)
     public ResponseEntity<List<LeaveTrendPoint>> getLeaveTrend(
             @RequestParam(required = false) Integer year,
             @RequestParam(required = false) Integer departmentId,
             Authentication authentication) {
 
-        // Simplified implementation - would query actual trend data
-        List<LeaveTrendPoint> trendPoints = List.of(
-                new LeaveTrendPoint("Jan", 15.5),
-                new LeaveTrendPoint("Feb", 12.0),
-                new LeaveTrendPoint("Mar", 18.5),
-                new LeaveTrendPoint("Apr", 10.0),
-                new LeaveTrendPoint("May", 14.5),
-                new LeaveTrendPoint("Jun", 8.0),
-                new LeaveTrendPoint("Jul", 5.0),
-                new LeaveTrendPoint("Aug", 6.5),
-                new LeaveTrendPoint("Sep", 11.0),
-                new LeaveTrendPoint("Oct", 13.5),
-                new LeaveTrendPoint("Nov", 9.5),
-                new LeaveTrendPoint("Dec", 7.0)
-        );
+        int resolvedYear = year != null ? year : LocalDate.now().getYear();
+        return ResponseEntity.ok(aggregator().monthlyTrend(resolvedYear, departmentId));
+    }
 
-        return ResponseEntity.ok(trendPoints);
+    // Per-leave-type monthly lines for the "Leave Trend Overview" chart,
+    // which used to be fed mock data on the frontend.
+    @GetMapping("/leave-trend-by-type")
+    @RequireRole({"HR_ADMIN"})
+    @Transactional(readOnly = true)
+    public ResponseEntity<List<LeaveTrendSeries>> getLeaveTrendByType(
+            @RequestParam(required = false) Integer year,
+            @RequestParam(required = false) Integer departmentId,
+            Authentication authentication) {
+
+        int resolvedYear = year != null ? year : LocalDate.now().getYear();
+        return ResponseEntity.ok(aggregator().trendByType(resolvedYear, departmentId));
+    }
+
+    // Org-wide leave-by-type breakdown for the distribution donut, which
+    // also used to be mock-only on the frontend.
+    @GetMapping("/distribution")
+    @RequireRole({"HR_ADMIN"})
+    @Transactional(readOnly = true)
+    public ResponseEntity<ReportDistributionResponse> getDistribution(
+            @RequestParam(required = false) String dateFrom,
+            @RequestParam(required = false) String dateTo,
+            @RequestParam(required = false) Integer departmentId,
+            Authentication authentication) {
+
+        return ResponseEntity.ok(aggregator().distribution(
+                parseDate(dateFrom, "dateFrom"), parseDate(dateTo, "dateTo"), departmentId));
     }
 
     @GetMapping("/department-summary")
     @RequireRole({"HR_ADMIN"})
+    @Transactional(readOnly = true)
     public ResponseEntity<List<DepartmentSummary>> getDepartmentSummary(
             @RequestParam(required = false) String dateFrom,
             @RequestParam(required = false) String dateTo,
             Authentication authentication) {
 
-        // Simplified implementation - would query actual department data
-        List<DepartmentSummary> departmentSummaries = List.of(
-                createDepartmentSummary(1, "Engineering", 15, 45.5, 3.03, 92.5),
-                createDepartmentSummary(2, "Marketing", 8, 22.0, 2.75, 88.0),
-                createDepartmentSummary(3, "Sales", 12, 38.5, 3.21, 85.5),
-                createDepartmentSummary(4, "HR", 5, 12.5, 2.50, 95.0),
-                createDepartmentSummary(5, "Finance", 5, 7.0, 1.40, 90.0)
-        );
-
-        return ResponseEntity.ok(departmentSummaries);
+        return ResponseEntity.ok(aggregator().departmentSummary(
+                parseDate(dateFrom, "dateFrom"), parseDate(dateTo, "dateTo")));
     }
 
     @GetMapping("/top-employees")
     @RequireRole({"HR_ADMIN"})
+    @Transactional(readOnly = true)
     public ResponseEntity<List<TopEmployee>> getTopEmployees(
             @RequestParam(required = false) String dateFrom,
             @RequestParam(required = false) String dateTo,
+            @RequestParam(required = false) Integer departmentId,
             @RequestParam(defaultValue = "5") int limit,
             Authentication authentication) {
 
-        // Simplified implementation - would query actual employee data
-        List<TopEmployee> topEmployees = List.of(
-                createTopEmployee(1, "John Smith", "Engineering", 12.5),
-                createTopEmployee(2, "Sarah Johnson", "Marketing", 10.0),
-                createTopEmployee(3, "Mike Wilson", "Sales", 9.5),
-                createTopEmployee(4, "Emily Brown", "Engineering", 8.5),
-                createTopEmployee(5, "David Lee", "Sales", 7.5)
-        );
-
-        return ResponseEntity.ok(topEmployees);
+        return ResponseEntity.ok(aggregator().topEmployees(
+                parseDate(dateFrom, "dateFrom"), parseDate(dateTo, "dateTo"), limit, departmentId));
     }
 
     @PostMapping("/export")
@@ -379,27 +405,5 @@ public class ReportsController {
             )).append('\n');
         }
         return sb.toString();
-    }
-
-    // Helper methods
-    private DepartmentSummary createDepartmentSummary(Integer id, String name, int totalEmployees,
-                                                      double totalLeaveDays, double avgPerEmployee, double approvalRate) {
-        DepartmentSummary summary = new DepartmentSummary();
-        summary.setDepartmentId(id);
-        summary.setDepartmentName(name);
-        summary.setTotalEmployees(totalEmployees);
-        summary.setTotalDays(totalLeaveDays);
-        summary.setAvgLeaveDaysPerEmployee(avgPerEmployee);
-        summary.setApprovalRate(approvalRate);
-        return summary;
-    }
-
-    private TopEmployee createTopEmployee(Integer userId, String fullName, String departmentName, double totalDaysTaken) {
-        TopEmployee employee = new TopEmployee();
-        employee.setUserId(userId);
-        employee.setFullName(fullName);
-        employee.setDepartmentName(departmentName);
-        employee.setTotalDaysTaken(totalDaysTaken);
-        return employee;
     }
 }

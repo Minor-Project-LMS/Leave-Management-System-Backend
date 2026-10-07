@@ -32,6 +32,7 @@ public class LeaveRequestCreate {
     private String status = "PENDING_L1";
     private Integer compOffRequestId;
     private List<Integer> attachmentIds;
+    private List<HandoverTaskInput> handoverTasks;
 
     // totalDays is calculated by server, not required from client
     private BigDecimal totalDays;
@@ -133,6 +134,14 @@ public class LeaveRequestCreate {
 
     public void setAttachmentIds(List<Integer> attachmentIds) {
         this.attachmentIds = attachmentIds;
+    }
+
+    public List<HandoverTaskInput> getHandoverTasks() {
+        return handoverTasks;
+    }
+
+    public void setHandoverTasks(List<HandoverTaskInput> handoverTasks) {
+        this.handoverTasks = handoverTasks;
     }
 
     public BigDecimal getTotalDays() {
