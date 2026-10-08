@@ -992,6 +992,13 @@ public class LeaveRequestsController {
         dto.setEscalatedAt(request.getEscalatedAt());
         dto.setOriginalApproverName(request.getOriginalApprover() != null ? request.getOriginalApprover().getFullName() : null);
 
+        dto.setHrNotified(request.isHrNotified());
+        dto.setHrNotifiedAt(request.getHrNotifiedAt());
+        if (request.isHrNotified()) {
+            dto.setHrNotifiedByName(request.getHrNotifiedBy() != null ? request.getHrNotifiedBy().getFullName() : "HR");
+        }
+        dto.setHrNotificationMessage(request.getHrNotificationMessage());
+
         return dto;
     }
 

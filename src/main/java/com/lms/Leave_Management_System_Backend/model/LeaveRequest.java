@@ -91,6 +91,21 @@ public class LeaveRequest {
     @JoinColumn(name = "original_approver_id")
     private User originalApprover;
 
+    // HR nudge that precedes escalation: before an urgent request is taken
+    // away from the manager, HR (or the scheduler on HR's behalf) notifies
+    // them first. hrNotifiedBy is null when the scheduler sent it. While
+    // this is set and the request is still pending, it's surfaced as a
+    // dashboard popup and pinned to the top of the manager's inbox.
+    @Column(name = "hr_notified_at")
+    private LocalDateTime hrNotifiedAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "hr_notified_by")
+    private User hrNotifiedBy;
+
+    @Column(name = "hr_notification_message", length = 500)
+    private String hrNotificationMessage;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "comp_off_request_id")
     private CompOffRequest compOffRequest;
@@ -264,5 +279,33 @@ public class LeaveRequest {
 
     public void setCompOffRequest(CompOffRequest compOffRequest) {
         this.compOffRequest = compOffRequest;
+    }
+
+    public LocalDateTime getHrNotifiedAt() {
+        return hrNotifiedAt;
+    }
+
+    public void setHrNotifiedAt(LocalDateTime hrNotifiedAt) {
+        this.hrNotifiedAt = hrNotifiedAt;
+    }
+
+    public boolean isHrNotified() {
+        return hrNotifiedAt != null;
+    }
+
+    public User getHrNotifiedBy() {
+        return hrNotifiedBy;
+    }
+
+    public void setHrNotifiedBy(User hrNotifiedBy) {
+        this.hrNotifiedBy = hrNotifiedBy;
+    }
+
+    public String getHrNotificationMessage() {
+        return hrNotificationMessage;
+    }
+
+    public void setHrNotificationMessage(String hrNotificationMessage) {
+        this.hrNotificationMessage = hrNotificationMessage;
     }
 }

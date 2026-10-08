@@ -54,7 +54,7 @@ public interface LeaveRequestRepository extends JpaRepository<LeaveRequest, Long
     @Query("SELECT lr FROM LeaveRequest lr WHERE lr.user.id = :userId OR lr.currentApprover.id = :userId")
     Page<LeaveRequest> findAccessibleByUserId(@Param("userId") Long userId, Pageable pageable);
 
-    @EntityGraph(attributePaths = {"user", "category", "currentApprover", "handoverTo", "originalApprover"})
+    @EntityGraph(attributePaths = {"user", "category", "currentApprover", "handoverTo", "originalApprover", "hrNotifiedBy"})
     @Query("SELECT lr FROM LeaveRequest lr WHERE lr.id IN :requestIds")
     List<LeaveRequest> findByIds(@Param("requestIds") List<Long> requestIds);
 
@@ -95,4 +95,11 @@ public interface LeaveRequestRepository extends JpaRepository<LeaveRequest, Long
     // since they were never the one who made a decision on it.
     @EntityGraph(attributePaths = {"user", "category", "currentApprover", "originalApprover"})
     List<LeaveRequest> findByOriginalApproverId(Long originalApproverId);
+
+    // Pending requests HR has flagged to this approver — drives the
+    // manager dashboard popup. Earliest-starting leave first, since that's
+    // the one closest to escalating.
+    @EntityGraph(attributePaths = {"user", "category", "currentApprover", "hrNotifiedBy"})
+    List<LeaveRequest> findByCurrentApproverIdAndStatusInAndHrNotifiedAtIsNotNullOrderByStartDateAsc(
+            Long approverId, List<LeaveRequest.RequestStatus> statuses);
 }

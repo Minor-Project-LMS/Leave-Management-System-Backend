@@ -22,6 +22,19 @@ public class ApprovalSlaSettings {
     @Column(name = "sla_days", nullable = false)
     private int slaDays = 3;
 
+    // Only requests whose leave starts within this many days are "urgent"
+    // and eligible for escalation. A leave starting next month has plenty
+    // of time to be approved normally, so it's never escalated just for
+    // sitting past the SLA — it only becomes eligible once its start date
+    // comes within this window.
+    @Column(name = "urgent_window_days", nullable = false, columnDefinition = "integer not null default 7")
+    private int urgentWindowDays = 7;
+
+    // How long after HR notifies the manager before the request is
+    // actually escalated — gives the manager a chance to act first.
+    @Column(name = "escalation_grace_days", nullable = false, columnDefinition = "integer not null default 1")
+    private int escalationGraceDays = 1;
+
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
@@ -42,6 +55,22 @@ public class ApprovalSlaSettings {
 
     public void setSlaDays(int slaDays) {
         this.slaDays = slaDays;
+    }
+
+    public int getUrgentWindowDays() {
+        return urgentWindowDays;
+    }
+
+    public void setUrgentWindowDays(int urgentWindowDays) {
+        this.urgentWindowDays = urgentWindowDays;
+    }
+
+    public int getEscalationGraceDays() {
+        return escalationGraceDays;
+    }
+
+    public void setEscalationGraceDays(int escalationGraceDays) {
+        this.escalationGraceDays = escalationGraceDays;
     }
 
     public LocalDateTime getUpdatedAt() {

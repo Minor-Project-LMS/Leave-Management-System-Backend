@@ -42,9 +42,7 @@ public class ApprovalSlaSettingsController {
     @GetMapping
     @RequireRole({"EMPLOYEE", "MANAGER", "HR_ADMIN"})
     public ResponseEntity<ApprovalSlaSettingsDto> getSlaSettings() {
-        ApprovalSlaSettingsDto dto = new ApprovalSlaSettingsDto();
-        dto.setSlaDays(approvalSlaService.getSlaDays());
-        return ResponseEntity.ok(dto);
+        return ResponseEntity.ok(toDto(approvalSlaService.getSettings()));
     }
 
     @PatchMapping
@@ -58,8 +56,23 @@ public class ApprovalSlaSettingsController {
                     "SLA must be at least 1 day.");
         }
 
+        if (request.getUrgentWindowDays() != null && request.getUrgentWindowDays() < 0) {
+            throw new com.lms.Leave_Management_System_Backend.exception.BusinessRuleException(
+                    "Urgent window cannot be negative.");
+        }
+        if (request.getEscalationGraceDays() != null && request.getEscalationGraceDays() < 0) {
+            throw new com.lms.Leave_Management_System_Backend.exception.BusinessRuleException(
+                    "Escalation grace period cannot be negative.");
+        }
+
         ApprovalSlaSettings settings = approvalSlaService.getSettings();
         settings.setSlaDays(request.getSlaDays());
+        if (request.getUrgentWindowDays() != null) {
+            settings.setUrgentWindowDays(request.getUrgentWindowDays());
+        }
+        if (request.getEscalationGraceDays() != null) {
+            settings.setEscalationGraceDays(request.getEscalationGraceDays());
+        }
         settings.setUpdatedAt(LocalDateTime.now());
 
         if (authentication != null) {
@@ -70,9 +83,7 @@ public class ApprovalSlaSettingsController {
 
         repository.save(settings);
 
-        ApprovalSlaSettingsDto dto = new ApprovalSlaSettingsDto();
-        dto.setSlaDays(settings.getSlaDays());
-        return ResponseEntity.ok(dto);
+        return ResponseEntity.ok(toDto(settings));
     }
 
     // Lets HR confirm this is actually configured correctly without
@@ -82,7 +93,18 @@ public class ApprovalSlaSettingsController {
     @PostMapping("/run-now")
     @RequireRole({"HR_ADMIN"})
     public ResponseEntity<Map<String, Integer>> runEscalationNow() {
-        int escalatedCount = leaveEscalationService.runEscalationNow();
-        return ResponseEntity.ok(Map.of("escalatedCount", escalatedCount));
+        LeaveEscalationService.EscalationResult result = leaveEscalationService.runEscalationNow();
+        return ResponseEntity.ok(Map.of(
+                "escalatedCount", result.escalated(),
+                "managersNotifiedCount", result.managersNotified(),
+                "deferredNotUrgentCount", result.deferredNotUrgent()));
+    }
+
+    private ApprovalSlaSettingsDto toDto(ApprovalSlaSettings settings) {
+        ApprovalSlaSettingsDto dto = new ApprovalSlaSettingsDto();
+        dto.setSlaDays(settings.getSlaDays());
+        dto.setUrgentWindowDays(settings.getUrgentWindowDays());
+        dto.setEscalationGraceDays(settings.getEscalationGraceDays());
+        return dto;
     }
 }

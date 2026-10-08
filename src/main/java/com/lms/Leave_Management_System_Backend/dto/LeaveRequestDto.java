@@ -23,6 +23,15 @@ public class LeaveRequestDto {
     private boolean escalated;
     private LocalDateTime escalatedAt;
     private String originalApproverName;
+    // Set once HR has notified the approver about this request (the step
+    // before escalation) — the frontend pins these to the top and shows
+    // them as a dashboard popup.
+    private boolean hrNotified;
+    private LocalDateTime hrNotifiedAt;
+    private String hrNotifiedByName;
+    private String hrNotificationMessage;
+    // Leave starts within the urgent window, so it can be escalated.
+    private boolean urgent;
     private String reason;
     private String status;
     private Long currentApproverId;
@@ -209,5 +218,45 @@ public class LeaveRequestDto {
 
     public void setOriginalApproverName(String originalApproverName) {
         this.originalApproverName = originalApproverName;
+    }
+
+    public boolean isHrNotified() {
+        return hrNotified;
+    }
+
+    public void setHrNotified(boolean hrNotified) {
+        this.hrNotified = hrNotified;
+    }
+
+    public LocalDateTime getHrNotifiedAt() {
+        return hrNotifiedAt;
+    }
+
+    public void setHrNotifiedAt(LocalDateTime hrNotifiedAt) {
+        this.hrNotifiedAt = hrNotifiedAt;
+    }
+
+    public String getHrNotifiedByName() {
+        return hrNotifiedByName;
+    }
+
+    public void setHrNotifiedByName(String hrNotifiedByName) {
+        this.hrNotifiedByName = hrNotifiedByName;
+    }
+
+    public String getHrNotificationMessage() {
+        return hrNotificationMessage;
+    }
+
+    public void setHrNotificationMessage(String hrNotificationMessage) {
+        this.hrNotificationMessage = hrNotificationMessage;
+    }
+
+    public boolean isUrgent() {
+        return urgent;
+    }
+
+    public void setUrgent(boolean urgent) {
+        this.urgent = urgent;
     }
 }

@@ -1,5 +1,8 @@
 package com.lms.Leave_Management_System_Backend.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.lms.Leave_Management_System_Backend.exception.ConflictException;
+import com.lms.Leave_Management_System_Backend.model.ApprovalSlaSettings;
 import com.lms.Leave_Management_System_Backend.model.LeaveRequest;
 import com.lms.Leave_Management_System_Backend.model.NotificationQueue;
 import com.lms.Leave_Management_System_Backend.model.User;
@@ -12,8 +15,10 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 // Approval SLA escalation: this is the involuntary counterpart to
@@ -26,10 +31,17 @@ import java.util.Optional;
 // HR's existing approval inbox — the same query that already surfaces
 // delegated approvals (WHERE currentApprover = :userId) picks these up too,
 // with no separate HR-facing queue required.
+//
+// Only urgent requests escalate (see runEscalationNow), and never without
+// the manager being notified by HR first.
 @Service
 public class LeaveEscalationService {
 
     private static final Logger log = LoggerFactory.getLogger(LeaveEscalationService.class);
+
+    private static final List<LeaveRequest.RequestStatus> PENDING_STATUSES =
+            List.of(LeaveRequest.RequestStatus.PENDING_L1, LeaveRequest.RequestStatus.PENDING_L2);
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final LeaveRequestRepository leaveRequestRepository;
     private final UserRepository userRepository;
@@ -56,40 +68,112 @@ public class LeaveEscalationService {
         runEscalationNow();
     }
 
+    public record EscalationResult(int escalated, int managersNotified, int deferredNotUrgent) {
+    }
+
+    // Overdue requests go through two stages, and only if they're urgent
+    // (leave starts within the urgent window):
+    //   1. HR notifies the manager first (unless HR already did manually).
+    //   2. If the manager still hasn't acted after the grace period, the
+    //      request is escalated to HR.
+    // Non-urgent requests (e.g. leave next month) are left with the manager
+    // — there's still time to approve them normally. They're re-checked on
+    // every run, so they become eligible once the start date gets close.
     @Transactional
-    public int runEscalationNow() {
-        int slaDays = approvalSlaService.getSlaDays();
-        LocalDateTime cutoff = LocalDateTime.now().minusDays(slaDays);
+    public EscalationResult runEscalationNow() {
+        ApprovalSlaSettings settings = approvalSlaService.getSettings();
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime cutoff = now.minusDays(settings.getSlaDays());
+        LocalDateTime graceCutoff = now.minusDays(settings.getEscalationGraceDays());
 
         List<LeaveRequest> overdue = leaveRequestRepository.findByStatusInAndAppliedAtBeforeAndEscalatedFalse(
-                List.of(LeaveRequest.RequestStatus.PENDING_L1, LeaveRequest.RequestStatus.PENDING_L2), cutoff);
+                PENDING_STATUSES, cutoff);
 
         if (overdue.isEmpty()) {
-            log.info("LeaveEscalationService: no overdue approvals to escalate (SLA = {} day(s))", slaDays);
-            return 0;
+            log.info("LeaveEscalationService: no overdue approvals (SLA = {} day(s))", settings.getSlaDays());
+            return new EscalationResult(0, 0, 0);
         }
 
         Optional<User> hrAdmin = userRepository.findFirstByRole_RoleCode("HR_ADMIN");
         if (hrAdmin.isEmpty()) {
             log.warn("LeaveEscalationService: {} overdue approval(s) found but no active HR_ADMIN to escalate to",
                     overdue.size());
-            return 0;
+            return new EscalationResult(0, 0, 0);
         }
 
         int escalatedCount = 0;
+        int notifiedCount = 0;
+        int deferredCount = 0;
         for (LeaveRequest request : overdue) {
             // A request can be missing a current approver (e.g. data
             // inconsistency) — skip rather than escalate "from nobody".
             if (request.getCurrentApprover() == null) continue;
             if (request.getCurrentApprover().getId().equals(hrAdmin.get().getId())) continue; // already HR's
 
-            escalate(request, hrAdmin.get());
-            escalatedCount++;
+            if (!isUrgent(request, settings)) {
+                deferredCount++;
+                continue;
+            }
+
+            if (!request.isHrNotified()) {
+                notifyManager(request, null, null);
+                notifiedCount++;
+            } else if (request.getHrNotifiedAt().isBefore(graceCutoff)) {
+                escalate(request, hrAdmin.get());
+                escalatedCount++;
+            }
         }
 
-        log.info("LeaveEscalationService: escalated {} of {} overdue approval(s) to {}",
-                escalatedCount, overdue.size(), hrAdmin.get().getFullName());
-        return escalatedCount;
+        log.info("LeaveEscalationService: {} overdue approval(s) — escalated {}, managers notified {}, "
+                        + "deferred (not urgent) {}",
+                overdue.size(), escalatedCount, notifiedCount, deferredCount);
+        return new EscalationResult(escalatedCount, notifiedCount, deferredCount);
+    }
+
+    // Leave starting on or before this date counts as urgent. Exposed so
+    // list endpoints can flag urgency without re-reading settings per row.
+    public LocalDate urgentUntil() {
+        return LocalDate.now().plusDays(approvalSlaService.getSettings().getUrgentWindowDays());
+    }
+
+    public static boolean isUrgent(LeaveRequest request, LocalDate urgentUntil) {
+        return request.getStartDate() != null && !request.getStartDate().isAfter(urgentUntil);
+    }
+
+    private boolean isUrgent(LeaveRequest request, ApprovalSlaSettings settings) {
+        return isUrgent(request, LocalDate.now().plusDays(settings.getUrgentWindowDays()));
+    }
+
+    // HR -> manager nudge. Called by the scheduler (notifiedBy = null) as
+    // the step before escalation, or directly by HR from the approvals
+    // screen. Either way it stamps the request so the manager's dashboard
+    // pops it up and the inbox pins it to the top.
+    @Transactional
+    public LeaveRequest notifyManager(LeaveRequest request, User notifiedBy, String customMessage) {
+        if (!PENDING_STATUSES.contains(request.getStatus())) {
+            throw new ConflictException("Only pending requests can be flagged to the manager");
+        }
+        User manager = request.getCurrentApprover();
+        if (manager == null) {
+            throw new ConflictException("This request does not have a current approver");
+        }
+
+        String employeeName = request.getUser() != null ? request.getUser().getFullName() : "an employee";
+        String message = customMessage != null && !customMessage.isBlank()
+                ? customMessage.trim()
+                : employeeName + "'s leave starting " + request.getStartDate()
+                        + " is still awaiting your approval. Please act on it, otherwise it will be escalated to HR.";
+        if (message.length() > 500) {
+            message = message.substring(0, 500);
+        }
+
+        request.setHrNotifiedAt(LocalDateTime.now());
+        request.setHrNotifiedBy(notifiedBy);
+        request.setHrNotificationMessage(message);
+        leaveRequestRepository.save(request);
+
+        notify(manager, "LEAVE_HR_REMINDER", "HR: action needed on a leave request", message, request.getId());
+        return request;
     }
 
     private void escalate(LeaveRequest request, User hrAdmin) {
@@ -130,11 +214,12 @@ public class LeaveEscalationService {
 
     private void notify(User user, String type, String title, String message, Long requestId) {
         try {
+            String payload = OBJECT_MAPPER.writeValueAsString(Map.of("title", title, "message", message));
             NotificationQueue notification = new NotificationQueue();
             notification.setUser(user);
             notification.setChannel(NotificationQueue.Channel.IN_APP);
             notification.setTemplateCode(type);
-            notification.setPayload("{\"title\":\"" + title + "\",\"message\":\"" + message + "\"}");
+            notification.setPayload(payload);
             notification.setRelatedEntityType("LEAVE_REQUEST");
             notification.setRelatedEntityId(requestId);
             notification.setStatus(NotificationQueue.NotificationStatus.QUEUED);
