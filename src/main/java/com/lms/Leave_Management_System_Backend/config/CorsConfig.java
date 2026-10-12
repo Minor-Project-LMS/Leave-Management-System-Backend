@@ -43,7 +43,9 @@ public class CorsConfig {
             "Accept",
             "Origin",
             "Access-Control-Request-Method",
-            "Access-Control-Request-Headers"
+            "Access-Control-Request-Headers",
+            "X-Amz-*",
+            "x-amz-*"
         ));
         
         configuration.setExposedHeaders(Arrays.asList(

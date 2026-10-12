@@ -14,7 +14,8 @@ import java.time.LocalDateTime;
         @jakarta.persistence.Index(name = "idx_status", columnList = "status"),
         @jakarta.persistence.Index(name = "idx_start_date", columnList = "start_date"),
         @jakarta.persistence.Index(name = "idx_end_date", columnList = "end_date"),
-        @jakarta.persistence.Index(name = "idx_user_status", columnList = "user_id, status")
+        @jakarta.persistence.Index(name = "idx_user_status", columnList = "user_id, status"),
+        @jakarta.persistence.Index(name = "idx_comp_off_request_id", columnList = "comp_off_request_id")
     }
 )
 public class LeaveRequest {
@@ -45,6 +46,9 @@ public class LeaveRequest {
     @Column(name = "total_days", nullable = false)
     private BigDecimal totalDays;
 
+    @Column(name = "lop_days", nullable = false)
+    private BigDecimal lopDays = BigDecimal.ZERO;
+
     @Column(name = "reason")
     private String reason;
 
@@ -71,6 +75,40 @@ public class LeaveRequest {
 
     @Column(name = "applied_at")
     private LocalDateTime appliedAt;
+
+    // Approval SLA escalation (see LeaveEscalationService): if this sits
+    // pending too long, it gets auto-reassigned to HR and these fields
+    // record that it happened, so the manager, HR, and the employee can
+    // all see it wasn't a normal approval routing — the original approver
+    // just didn't act in time.
+    @Column(name = "escalated", nullable = false)
+    private boolean escalated = false;
+
+    @Column(name = "escalated_at")
+    private LocalDateTime escalatedAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "original_approver_id")
+    private User originalApprover;
+
+    // HR nudge that precedes escalation: before an urgent request is taken
+    // away from the manager, HR (or the scheduler on HR's behalf) notifies
+    // them first. hrNotifiedBy is null when the scheduler sent it. While
+    // this is set and the request is still pending, it's surfaced as a
+    // dashboard popup and pinned to the top of the manager's inbox.
+    @Column(name = "hr_notified_at")
+    private LocalDateTime hrNotifiedAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "hr_notified_by")
+    private User hrNotifiedBy;
+
+    @Column(name = "hr_notification_message", length = 500)
+    private String hrNotificationMessage;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "comp_off_request_id")
+    private CompOffRequest compOffRequest;
 
     public enum SessionType {
         FULL_DAY, FIRST_HALF, SECOND_HALF
@@ -139,6 +177,14 @@ public class LeaveRequest {
         this.totalDays = totalDays;
     }
 
+    public BigDecimal getLopDays() {
+        return lopDays;
+    }
+
+    public void setLopDays(BigDecimal lopDays) {
+        this.lopDays = lopDays;
+    }
+
     public String getReason() {
         return reason;
     }
@@ -201,5 +247,65 @@ public class LeaveRequest {
 
     public void setAppliedAt(LocalDateTime appliedAt) {
         this.appliedAt = appliedAt;
+    }
+
+    public boolean isEscalated() {
+        return escalated;
+    }
+
+    public void setEscalated(boolean escalated) {
+        this.escalated = escalated;
+    }
+
+    public LocalDateTime getEscalatedAt() {
+        return escalatedAt;
+    }
+
+    public void setEscalatedAt(LocalDateTime escalatedAt) {
+        this.escalatedAt = escalatedAt;
+    }
+
+    public User getOriginalApprover() {
+        return originalApprover;
+    }
+
+    public void setOriginalApprover(User originalApprover) {
+        this.originalApprover = originalApprover;
+    }
+
+    public CompOffRequest getCompOffRequest() {
+        return compOffRequest;
+    }
+
+    public void setCompOffRequest(CompOffRequest compOffRequest) {
+        this.compOffRequest = compOffRequest;
+    }
+
+    public LocalDateTime getHrNotifiedAt() {
+        return hrNotifiedAt;
+    }
+
+    public void setHrNotifiedAt(LocalDateTime hrNotifiedAt) {
+        this.hrNotifiedAt = hrNotifiedAt;
+    }
+
+    public boolean isHrNotified() {
+        return hrNotifiedAt != null;
+    }
+
+    public User getHrNotifiedBy() {
+        return hrNotifiedBy;
+    }
+
+    public void setHrNotifiedBy(User hrNotifiedBy) {
+        this.hrNotifiedBy = hrNotifiedBy;
+    }
+
+    public String getHrNotificationMessage() {
+        return hrNotificationMessage;
+    }
+
+    public void setHrNotificationMessage(String hrNotificationMessage) {
+        this.hrNotificationMessage = hrNotificationMessage;
     }
 }

@@ -39,12 +39,15 @@ public class ManagerDashboardController {
         summary.setActiveEmployees((int) teamMembers.stream()
                 .filter(m -> m.getEmploymentStatus() == User.EmploymentStatus.ACTIVE)
                 .count());
-        
+
         List<LeaveRequest> pendingL1 = leaveRequestRepository.findByCurrentApproverIdAndStatus(user.getId(), LeaveRequest.RequestStatus.PENDING_L1);
         List<LeaveRequest> pendingL2 = leaveRequestRepository.findByCurrentApproverIdAndStatus(user.getId(), LeaveRequest.RequestStatus.PENDING_L2);
         summary.setPendingApprovals(pendingL1.size() + pendingL2.size());
         summary.setPendingUrgent((pendingL1.size() + pendingL2.size()) > 3); // Example urgency logic
-        
+        summary.setHrNotifiedCount((int) java.util.stream.Stream.concat(pendingL1.stream(), pendingL2.stream())
+                .filter(LeaveRequest::isHrNotified)
+                .count());
+
         LocalDate thisMonth = LocalDate.now().withDayOfMonth(1);
         LocalDate endOfMonth = thisMonth.plusMonths(1).minusDays(1);
         int leavesThisMonth = 0;
@@ -64,7 +67,7 @@ public class ManagerDashboardController {
     public ResponseEntity<List<LeaveTrendPoint>> getManagerLeaveTrend(
             @RequestParam(defaultValue = "6") int months,
             Authentication authentication) {
-        
+
         // Simplified implementation - would query actual team leave trend data
         List<LeaveTrendPoint> trendPoints = List.of(
                 new LeaveTrendPoint("Jan", 15.5),
@@ -81,7 +84,7 @@ public class ManagerDashboardController {
     @GetMapping("/leave-distribution")
     @RequireRole({"MANAGER", "HR_ADMIN"})
     public ResponseEntity<List<LeaveDistributionSlice>> getManagerLeaveDistribution(Authentication authentication) {
-        
+
         // Simplified implementation - would query actual team leave distribution data
         List<LeaveDistributionSlice> distribution = List.of(
                 new LeaveDistributionSlice("Casual Leave", 12.0, "#2563eb"),

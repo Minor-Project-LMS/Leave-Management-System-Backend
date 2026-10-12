@@ -1,17 +1,13 @@
 package com.lms.Leave_Management_System_Backend.dto;
 
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Size;
 
-public class CompOffDecisionRequest {
-    @NotBlank(message = "decision is required")
-    private String decision;
-    
-    @Size(max = 2000, message = "comments must be less than 2000 characters")
+public class LeaveDonationDecisionRequest {
+
+    @NotBlank
+    private String decision; // APPROVED | REJECTED
+
     private String comments;
-
-    public CompOffDecisionRequest() {
-    }
 
     public String getDecision() {
         return decision;

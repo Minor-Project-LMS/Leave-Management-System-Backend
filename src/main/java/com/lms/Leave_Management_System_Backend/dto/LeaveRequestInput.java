@@ -32,8 +32,12 @@ public class LeaveRequestInput {
     private Integer handoverTo;
     
     private String handoverNotes;
-    
+
+    private List<HandoverTaskInput> handoverTasks;
+
     private String status;
+    
+    private Integer compOffRequestId;
     
     private List<Integer> attachmentIds;
 
@@ -110,12 +114,28 @@ public class LeaveRequestInput {
         this.handoverNotes = handoverNotes;
     }
 
+    public List<HandoverTaskInput> getHandoverTasks() {
+        return handoverTasks;
+    }
+
+    public void setHandoverTasks(List<HandoverTaskInput> handoverTasks) {
+        this.handoverTasks = handoverTasks;
+    }
+
     public String getStatus() {
         return status;
     }
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public Integer getCompOffRequestId() {
+        return compOffRequestId;
+    }
+
+    public void setCompOffRequestId(Integer compOffRequestId) {
+        this.compOffRequestId = compOffRequestId;
     }
 
     public List<Integer> getAttachmentIds() {

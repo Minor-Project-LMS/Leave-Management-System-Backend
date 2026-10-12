@@ -1,12 +1,13 @@
 package com.lms.Leave_Management_System_Backend.dto;
 
 public class PendingApprovalPreview {
-    
+
     private String id;
     private String name;
     private String type;
     private String dateRange;
     private Double days;
+    private boolean hrNotified;
 
     // Getters and Setters
     public String getId() {
@@ -47,5 +48,13 @@ public class PendingApprovalPreview {
 
     public void setDays(Double days) {
         this.days = days;
+    }
+
+    public boolean isHrNotified() {
+        return hrNotified;
+    }
+
+    public void setHrNotified(boolean hrNotified) {
+        this.hrNotified = hrNotified;
     }
 }

@@ -61,6 +61,11 @@ public class User {
     @Column(name = "avatar_url")
     private String avatarUrl;
 
+    // NOTE: avatar_attachment_id column not in database - pending migration
+    // Field kept for future use but not mapped to database
+    @Transient
+    private Long avatarAttachmentId;
+
     @Column(name = "phone")
     private String phone;
 
@@ -203,6 +208,14 @@ public class User {
 
     public void setAvatarUrl(String avatarUrl) {
         this.avatarUrl = avatarUrl;
+    }
+
+    public Long getAvatarAttachmentId() {
+        return avatarAttachmentId;
+    }
+
+    public void setAvatarAttachmentId(Long avatarAttachmentId) {
+        this.avatarAttachmentId = avatarAttachmentId;
     }
 
     public String getPhone() {

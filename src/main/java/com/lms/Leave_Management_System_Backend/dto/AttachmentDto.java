@@ -10,6 +10,7 @@ public class AttachmentDto {
     private Long uploadedBy;
     private LocalDateTime uploadedAt;
     private String downloadUrl;
+    private String uploadStatus;
 
     // Constructors
     public AttachmentDto() {}
@@ -69,6 +70,14 @@ public class AttachmentDto {
 
     public void setDownloadUrl(String downloadUrl) {
         this.downloadUrl = downloadUrl;
+    }
+
+    public String getUploadStatus() {
+        return uploadStatus;
+    }
+
+    public void setUploadStatus(String uploadStatus) {
+        this.uploadStatus = uploadStatus;
     }
 
     // Backward compatibility

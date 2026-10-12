@@ -18,4 +18,8 @@ public interface LeaveCategoryRepository extends JpaRepository<LeaveCategory, In
     @EntityGraph(attributePaths = {"department"})
     @Override
     Optional<LeaveCategory> findById(Integer id);
+
+    Optional<LeaveCategory> findByCategoryCode(String categoryCode);
+
+    boolean existsByCategoryNameIgnoreCase(String categoryName);
 }

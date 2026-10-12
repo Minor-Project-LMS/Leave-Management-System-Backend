@@ -3,6 +3,7 @@ package com.lms.Leave_Management_System_Backend.dto;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 
 public class LeaveRequestDto {
     private Long id;
@@ -14,10 +15,30 @@ public class LeaveRequestDto {
     private LocalDate endDate;
     private String sessionType;
     private BigDecimal totalDays;
+    private BigDecimal lopDays;
+    // Self-checklist the applicant adds when applying — visible to both the
+    // employee (who checks items off) and the manager (read-only, informs
+    // their approval decision but never blocks it).
+    private List<HandoverTaskDto> handoverTasks;
+    private boolean escalated;
+    private LocalDateTime escalatedAt;
+    private String originalApproverName;
+    // Set once HR has notified the approver about this request (the step
+    // before escalation) — the frontend pins these to the top and shows
+    // them as a dashboard popup.
+    private boolean hrNotified;
+    private LocalDateTime hrNotifiedAt;
+    private String hrNotifiedByName;
+    private String hrNotificationMessage;
+    // Leave starts within the urgent window, so it can be escalated.
+    private boolean urgent;
     private String reason;
     private String status;
     private Long currentApproverId;
     private String currentApproverName;
+    private String currentApproverAvatarUrl;
+    private String userAvatarUrl;
+    private Integer compOffRequestId;
     private LocalDateTime appliedAt;
 
     public LeaveRequestDto() {
@@ -95,6 +116,14 @@ public class LeaveRequestDto {
         this.totalDays = totalDays;
     }
 
+    public BigDecimal getLopDays() {
+        return lopDays;
+    }
+
+    public void setLopDays(BigDecimal lopDays) {
+        this.lopDays = lopDays;
+    }
+
     public String getReason() {
         return reason;
     }
@@ -127,11 +156,107 @@ public class LeaveRequestDto {
         this.currentApproverName = currentApproverName;
     }
 
+    public String getCurrentApproverAvatarUrl() {
+        return currentApproverAvatarUrl;
+    }
+
+    public void setCurrentApproverAvatarUrl(String currentApproverAvatarUrl) {
+        this.currentApproverAvatarUrl = currentApproverAvatarUrl;
+    }
+
+    public String getUserAvatarUrl() {
+        return userAvatarUrl;
+    }
+
+    public void setUserAvatarUrl(String userAvatarUrl) {
+        this.userAvatarUrl = userAvatarUrl;
+    }
+
+    public Integer getCompOffRequestId() {
+        return compOffRequestId;
+    }
+
+    public void setCompOffRequestId(Integer compOffRequestId) {
+        this.compOffRequestId = compOffRequestId;
+    }
+
     public LocalDateTime getAppliedAt() {
         return appliedAt;
     }
 
     public void setAppliedAt(LocalDateTime appliedAt) {
         this.appliedAt = appliedAt;
+    }
+
+    public List<HandoverTaskDto> getHandoverTasks() {
+        return handoverTasks;
+    }
+
+    public void setHandoverTasks(List<HandoverTaskDto> handoverTasks) {
+        this.handoverTasks = handoverTasks;
+    }
+
+    public boolean isEscalated() {
+        return escalated;
+    }
+
+    public void setEscalated(boolean escalated) {
+        this.escalated = escalated;
+    }
+
+    public LocalDateTime getEscalatedAt() {
+        return escalatedAt;
+    }
+
+    public void setEscalatedAt(LocalDateTime escalatedAt) {
+        this.escalatedAt = escalatedAt;
+    }
+
+    public String getOriginalApproverName() {
+        return originalApproverName;
+    }
+
+    public void setOriginalApproverName(String originalApproverName) {
+        this.originalApproverName = originalApproverName;
+    }
+
+    public boolean isHrNotified() {
+        return hrNotified;
+    }
+
+    public void setHrNotified(boolean hrNotified) {
+        this.hrNotified = hrNotified;
+    }
+
+    public LocalDateTime getHrNotifiedAt() {
+        return hrNotifiedAt;
+    }
+
+    public void setHrNotifiedAt(LocalDateTime hrNotifiedAt) {
+        this.hrNotifiedAt = hrNotifiedAt;
+    }
+
+    public String getHrNotifiedByName() {
+        return hrNotifiedByName;
+    }
+
+    public void setHrNotifiedByName(String hrNotifiedByName) {
+        this.hrNotifiedByName = hrNotifiedByName;
+    }
+
+    public String getHrNotificationMessage() {
+        return hrNotificationMessage;
+    }
+
+    public void setHrNotificationMessage(String hrNotificationMessage) {
+        this.hrNotificationMessage = hrNotificationMessage;
+    }
+
+    public boolean isUrgent() {
+        return urgent;
+    }
+
+    public void setUrgent(boolean urgent) {
+        this.urgent = urgent;
     }
 }

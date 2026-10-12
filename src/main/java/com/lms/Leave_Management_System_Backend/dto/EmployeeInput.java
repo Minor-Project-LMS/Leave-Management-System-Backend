@@ -4,42 +4,53 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import jakarta.validation.groups.Default;
 
 import java.time.LocalDate;
 
 public class EmployeeInput {
-    
+
+    // Validation groups: EmployeeInput is shared by POST /employees
+    // (create, where these fields must all be present) and PATCH
+    // /employees/{id} (update, which is a genuine partial update — e.g.
+    // the "Manage Roles & Access" modal sends only { role: "MANAGER" }).
+    // Both groups extend Default so format constraints like @Email/@Size
+    // still apply whenever a field IS provided; only the "must be
+    // present at all" (@NotNull/@NotBlank) checks are create-only.
+    public interface OnCreate extends Default {}
+    public interface OnUpdate extends Default {}
+
     @Size(max = 20)
     private String employeeCode;
-    
-    @NotBlank
+
+    @NotBlank(groups = OnCreate.class)
     @Size(max = 120)
     private String fullName;
-    
-    @NotBlank
+
+    @NotBlank(groups = OnCreate.class)
     @Email
     @Size(max = 150)
     private String email;
-    
+
     private String phone;
-    
-    @NotNull
+
+    @NotNull(groups = OnCreate.class)
     private String role;
-    
-    @NotNull
+
+    @NotNull(groups = OnCreate.class)
     private Integer departmentId;
-    
+
     private String designation;
-    
+
     private Integer reportsTo;
-    
-    @NotNull
+
+    @NotNull(groups = OnCreate.class)
     private LocalDate dateOfJoining;
-    
+
     private String employmentStatus;
-    
+
     private String workLocation;
-    
+
     private String employmentType;
 
     // Getters and Setters

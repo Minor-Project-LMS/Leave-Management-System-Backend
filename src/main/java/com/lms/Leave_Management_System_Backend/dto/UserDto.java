@@ -20,6 +20,8 @@ public class UserDto {
     private String employmentType;
     private Long reportsToId;
     private String reportsToName;
+    private String avatarUrl;
+    private Long avatarAttachmentId;
 
     public UserDto() {
     }
@@ -171,6 +173,22 @@ public class UserDto {
 
     public void setReportsToName(String reportsToName) {
         this.reportsToName = reportsToName;
+    }
+
+    public String getAvatarUrl() {
+        return avatarUrl;
+    }
+
+    public void setAvatarUrl(String avatarUrl) {
+        this.avatarUrl = avatarUrl;
+    }
+
+    public Long getAvatarAttachmentId() {
+        return avatarAttachmentId;
+    }
+
+    public void setAvatarAttachmentId(Long avatarAttachmentId) {
+        this.avatarAttachmentId = avatarAttachmentId;
     }
 
     // Method to support both Long and Integer

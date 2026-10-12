@@ -9,13 +9,13 @@ import java.util.List;
 
 @Repository
 public interface LeaveApprovalRepository extends JpaRepository<LeaveApproval, Long> {
-    
-    @EntityGraph(attributePaths = {"request", "approver"})
+
+    @EntityGraph(attributePaths = {"request", "approver", "actingAsDelegateFor"})
     List<LeaveApproval> findByRequestId(Long requestId);
-    
-    @EntityGraph(attributePaths = {"request", "approver"})
+
+    @EntityGraph(attributePaths = {"request", "approver", "actingAsDelegateFor"})
     List<LeaveApproval> findByApproverId(Long approverId);
-    
-    @EntityGraph(attributePaths = {"request", "approver"})
+
+    @EntityGraph(attributePaths = {"request", "approver", "actingAsDelegateFor"})
     List<LeaveApproval> findByRequestIdAndLevel(Long requestId, Integer level);
 }

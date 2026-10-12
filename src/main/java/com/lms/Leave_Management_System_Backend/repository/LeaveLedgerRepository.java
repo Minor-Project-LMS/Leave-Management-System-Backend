@@ -1,5 +1,6 @@
 package com.lms.Leave_Management_System_Backend.repository;
 
+import com.lms.Leave_Management_System_Backend.dto.TeamLeaveSummary;
 import com.lms.Leave_Management_System_Backend.model.LeaveLedger;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -56,4 +57,18 @@ public interface LeaveLedgerRepository extends JpaRepository<LeaveLedger, Long> 
         @Param("userId") Long userId,
         @Param("fiscalYear") Integer fiscalYear,
         @Param("categoryId") Integer categoryId);
+
+    @Query("SELECT new com.lms.Leave_Management_System_Backend.dto.TeamLeaveSummary(" +
+            "  c.id, " +
+            "  c.categoryName, " +
+            "  CAST(SUM(ll.used) AS double) " +
+            ") " +
+            "FROM LeaveLedger ll " +
+            "JOIN ll.category c " +
+            "WHERE ll.user.id IN :userIds " +
+            "AND ll.fiscalYear = :year " +
+            "GROUP BY c.id, c.categoryName")
+    List<TeamLeaveSummary> findTeamLeaveSummary(
+            @Param("userIds") List<Long> userIds,
+            @Param("year") int year);
 }

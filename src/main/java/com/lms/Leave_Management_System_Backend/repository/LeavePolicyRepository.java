@@ -15,33 +15,33 @@ import java.util.Optional;
 @Repository
 public interface LeavePolicyRepository extends JpaRepository<LeavePolicy, Integer> {
 
-    @EntityGraph(attributePaths = {"category", "department"})
+    @EntityGraph(attributePaths = {"category", "department", "department.departmentHead"})
     @Override
     Page<LeavePolicy> findAll(Pageable pageable);
 
-    @EntityGraph(attributePaths = {"category", "department"})
+    @EntityGraph(attributePaths = {"category", "department", "department.departmentHead"})
     @Override
     Optional<LeavePolicy> findById(Integer id);
 
-    @EntityGraph(attributePaths = {"category", "department"})
+    @EntityGraph(attributePaths = {"category", "department", "department.departmentHead"})
     List<LeavePolicy> findByCategoryId(Integer categoryId);
 
-    @EntityGraph(attributePaths = {"category", "department"})
+    @EntityGraph(attributePaths = {"category", "department", "department.departmentHead"})
     List<LeavePolicy> findByDepartmentId(Integer departmentId);
 
-    @EntityGraph(attributePaths = {"category", "department"})
+    @EntityGraph(attributePaths = {"category", "department", "department.departmentHead"})
     Optional<LeavePolicy> findByCategoryIdAndDepartmentId(Integer categoryId, Integer departmentId);
 
-    @EntityGraph(attributePaths = {"category", "department"})
+    @EntityGraph(attributePaths = {"category", "department", "department.departmentHead"})
     List<LeavePolicy> findByCategoryIdAndDepartmentIdIsNull(Integer categoryId);
 
     // Enhanced methods for API support (without status since model doesn't have it)
-    @EntityGraph(attributePaths = {"category", "department"})
+    @EntityGraph(attributePaths = {"category", "department", "department.departmentHead"})
     @Query("SELECT p FROM LeavePolicy p WHERE " +
-           "(:categoryId IS NULL OR p.category.id = :categoryId) AND " +
-           "(:departmentId IS NULL OR p.department.id = :departmentId)")
+            "(:categoryId IS NULL OR p.category.id = :categoryId) AND " +
+            "(:departmentId IS NULL OR p.department.id = :departmentId)")
     Page<LeavePolicy> findWithFilters(
-        @Param("categoryId") Integer categoryId,
-        @Param("departmentId") Integer departmentId,
-        Pageable pageable);
+            @Param("categoryId") Integer categoryId,
+            @Param("departmentId") Integer departmentId,
+            Pageable pageable);
 }

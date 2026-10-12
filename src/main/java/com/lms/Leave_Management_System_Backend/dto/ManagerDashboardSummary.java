@@ -1,11 +1,14 @@
 package com.lms.Leave_Management_System_Backend.dto;
 
 public class ManagerDashboardSummary {
-    
+
     private Integer totalTeamSize;
     private Integer activeEmployees;
     private Integer pendingApprovals;
     private Boolean pendingUrgent;
+    // Pending requests HR has notified this manager about — non-zero means
+    // the dashboard should show the HR popup (details via /approvals/hr-alerts).
+    private Integer hrNotifiedCount;
     private Integer leavesThisMonth;
     private Double leavesThisMonthChangePct;
     private Double availableBalanceAvg;
@@ -65,5 +68,13 @@ public class ManagerDashboardSummary {
 
     public void setAvailableBalanceAvg(Double availableBalanceAvg) {
         this.availableBalanceAvg = availableBalanceAvg;
+    }
+
+    public Integer getHrNotifiedCount() {
+        return hrNotifiedCount;
+    }
+
+    public void setHrNotifiedCount(Integer hrNotifiedCount) {
+        this.hrNotifiedCount = hrNotifiedCount;
     }
 }
